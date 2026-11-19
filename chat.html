@@ -27,6 +27,8 @@ const API = 'https://texakzqqenzpxawktbgx.supabase.co/functions/v1/lot-plan';
 const TOOLKIT = 'https://www.shareable.net/toolkit/library-of-things/';
 const COVER = 'https://i0.wp.com/www.shareable.net/wp-content/uploads/2026/03/LoT-2-Digital-Toolkit-Cover-2-scaled.png?w=600&quality=80&ssl=1';
 const STORE = 'lot-launch-chat-v1';
+const TEAM = 'lot-launch-team';
+const WHO = ['Property manager', 'A resident leader', 'Our own team', 'Shareable, in our 1:1'];
 
 const SECTIONS = [
   { id: 'purpose', title: 'Purpose and people' },
@@ -53,7 +55,7 @@ To start: who are you, and what building is this for?`;
 // ---------- State ----------
 
 function blank() {
-  return { view: 'chat', topic: 'project', turns: {}, messages: [{ role: 'guide', text: HELLO }], decisions: [], open: [], sources: {}, plan: null, n: 0 };
+  return { view: 'chat', topic: 'project', turns: {}, messages: [{ role: 'guide', text: HELLO }], decisions: [], open: [], sources: {}, plan: null, flyer: null, room: '', n: 0 };
 }
 
 let state = blank();
@@ -67,8 +69,10 @@ function save() {
 }
 
 const nextId = () => `x${++state.n}`;
+const team = () => { try { return localStorage.getItem(TEAM) || ''; } catch { return ''; } };
+const today = () => new Date().toISOString().slice(0, 10);
 const fresh = new Set();
-const live = { busy: false, error: null, boardOpen: false, editing: null, draft: '', writing: null };
+const live = { flyering: false, busy: false, error: null, boardOpen: false, editing: null, draft: '', writing: null };
 
 // ---------- Small helpers ----------
 
@@ -233,7 +237,7 @@ async function send(text) {
       const item = { id: nextId(), topic: validTopic(o.topic) ? o.topic : state.topic, text: String(o.text).trim() };
       state.open.push(item);
       fresh.add(item.id);
-      parked.push(item.text);
+      parked.push(item.id);
     }
     state.turns[state.topic] = (state.turns[state.topic] || 0) + 1;
     const done = meta.topic === 'done';
@@ -268,7 +272,7 @@ function lockIn(p, text) {
   if (!p.text) return;
   p.status = 'locked';
   if (!state.decisions.some((d) => same(d.text, p.text))) {
-    const d = { id: nextId(), topic: p.topic, text: p.text };
+    const d = { id: nextId(), topic: p.topic, text: p.text, at: today(), by: state.room.trim() };
     state.decisions.push(d);
     fresh.add(d.id);
   }
@@ -296,7 +300,7 @@ async function writePlan() {
           action: 'draft', section: s.id, project: { building: facts },
           answers: [
             { q: 'What we have locked in for this part of the plan', a: mine.join(' ') },
-            { q: 'What we said we still do not know', a: parked.join(' ') },
+            { q: 'Questions we have already parked and given to someone to ask (do not repeat these under Still to figure out)', a: parked.join(' ') },
           ],
           decisions: state.decisions.map((d) => ({ text: d.text })),
         }, () => {});
@@ -337,7 +341,16 @@ function planMarkdown() {
     for (const o of parts.open) open.push(`${o.replace(/\s*\[lot-[\d,\slot-]*\]/g, '')} (${s.title})`);
     for (const m of md.matchAll(/lot-\d+/g)) if (state.sources[m[0]] && !cited.includes(m[0])) cited.push(m[0]);
   }
-  if (open.length) lines.push('## Still to figure out', '', ...open.map((o) => `- ${o}`), '');
+  if (state.open.length) {
+    lines.push('## Conversations to have this week', '');
+    for (const [who, items] of byPerson()) lines.push(`**${who}**`, ...items.map((o) => `- ${o.text} (${topicTitle(o.topic)})`), '');
+  }
+  if (open.length) lines.push('## More to figure out', '', ...open.map((o) => `- ${o}`), '');
+  if (state.decisions.length) {
+    lines.push('## Decision log', '', '| Date | Topic | Decision | In the room |', '| --- | --- | --- | --- |');
+    for (const t of TOPICS) for (const d of state.decisions.filter((x) => x.topic === t.id)) lines.push(`| ${d.at || ''} | ${t.title} | ${d.text.replace(/\|/g, '/')} | ${(d.by || '').replace(/\|/g, '/')} |`);
+    lines.push('');
+  }
   if (cited.length) {
     lines.push('## From the toolkit', '');
     for (const id of cited) lines.push(`- [${id}] ${state.sources[id].heading}: ${state.sources[id].url}`);
@@ -354,7 +367,7 @@ function footer() {
     Built on the <a href="${TOOLKIT}" target="_blank" rel="noopener">Library of Things Toolkit 2.0</a> by Shareable (CC BY-NC-ND 4.0).
     A prototype by the Relational Tech Project. Drafts are a starting point: check anything about insurance, legal or money with your own advisors.
     <span class="no-print">Your conversation stays in this browser. It is sent to an AI model only to reply and to write your plan.</span>
-    <span class="no-print">Rather fill it in step by step? <a href="./">Try the workbook version</a>.</span>
+    <span class="no-print">Rather fill it in step by step? <a href="./">Try the workbook version</a>. See what other teams are asking on the <a href="wall">cohort wall</a>.</span>
   </footer>`;
 }
 
@@ -372,6 +385,36 @@ function proposalHtml(p) {
     </div></div>`;
 }
 
+/** A parked question is only useful once it has someone to ask */
+function parkedHtml(ref) {
+  const o = state.open.find((d) => d.id === ref) || state.open.find((d) => d.text === ref);
+  if (!o) return '';
+  const editingWho = live.editing && live.editing.kind === 'who' && live.editing.id === o.id;
+  const editingTeam = live.editing && live.editing.kind === 'team' && live.editing.id === o.id;
+  let who;
+  if (editingWho) who = `<div class="who-row"><input type="text" id="edit-input" placeholder="Who would know?" aria-label="Who would know?"><button class="btn small" data-act="edit-save">Save</button></div>`;
+  else if (o.who) who = `<div class="who-row"><span>Ask: <strong>${esc(o.who)}</strong></span><button class="btn quiet small" data-act="who-clear" data-id="${o.id}">Change</button></div>`;
+  else who = `<div class="who-row"><span class="tag">Who would know?</span>${WHO.map((w) => `<button class="chip" data-act="who" data-id="${o.id}" data-who="${esc(w)}">${esc(w)}</button>`).join('')}<button class="chip unsure" data-act="who-other" data-id="${o.id}">Someone else</button></div>`;
+  let cohort;
+  if (editingTeam) cohort = `<div class="who-row"><input type="text" id="edit-input" placeholder="Post as: your team and city" aria-label="Post as"><button class="btn small" data-act="edit-save">Post to the wall</button></div>`;
+  else if (o.wall) cohort = `<div class="who-row"><span>On the <a href="wall" target="_blank" rel="noopener">cohort wall</a>. Check back for replies.</span></div>`;
+  else cohort = `<div class="who-row"><button class="btn quiet small" data-act="ask-cohort" data-id="${o.id}">Ask the other teams on the cohort wall</button></div>`;
+  return `<div class="parked-card${fresh.has(o.id) ? ' fresh' : ''}"><p><span class="tag">Parked</span> ${esc(o.text)}</p>${who}${cohort}</div>`;
+}
+
+async function postToWall(o) {
+  try {
+    const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'wall_post', team: team(), topic: o.topic, text: o.text }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not post to the wall.');
+    o.wall = data.post.id;
+  } catch (err) {
+    live.error = err.message === 'Failed to fetch' ? 'Could not reach the cohort wall. Try again.' : err.message;
+  }
+  save();
+  render();
+}
+
 function messageHtml(m, i) {
   if (m.role === 'you') return `<div class="msg you">${esc(m.text)}</div>`;
   const r = renderMd(m.text);
@@ -382,7 +425,7 @@ function messageHtml(m, i) {
     ${(m.proposals || []).length ? `<div class="proposals">
       ${pending.length > 1 ? `<button class="btn dark small lock-all" data-act="lock-all" data-i="${i}">Lock in all ${pending.length}</button>` : ''}
       ${m.proposals.map(proposalHtml).join('')}</div>` : ''}
-    ${(m.parked || []).length ? `<div class="parked">Parked for later: ${m.parked.map(esc).join(' ')}</div>` : ''}
+    ${(m.parked || []).map(parkedHtml).join('')}
     ${m.done && !live.writing ? `<div class="cta"><p>Your board has what it needs. Ready when you are.</p><button class="btn" data-act="write">Write my launch plan</button></div>` : ''}
   </div>`;
 }
@@ -441,11 +484,116 @@ function viewPlan() {
       <button class="btn quiet" data-act="write">Rewrite the plan</button>
     </div>
     ${body}
-    ${open.length ? `<section class="plan-section open-qs"><h2>Still to figure out</h2>
-      <div class="prose"><p>Bring these to your team, your residents, or your next 1:1 with Shareable.</p>
+    ${conversationsHtml()}
+    ${open.length ? `<section class="plan-section open-qs"><h2>More to figure out</h2>
+      <div class="prose"><p>These came up while writing the plan. Decide who takes each one.</p>
       <ul>${open.map((o) => `<li>${esc(o.text)} <span style="color:var(--soft)">(${esc(o.from)})</span></li>`).join('')}</ul></div></section>` : ''}
+    ${logHtml()}
+    <section class="plan-section no-print"><h2>Next: ask your residents</h2>
+      <div class="prose"><p>A plan gets real when neighbors say yes. Turn what you have locked in into a one-page handout for doors and the laundry room wall.</p></div>
+      <div class="row"><button class="btn" data-act="flyer">${state.flyer ? 'Open the one-pager' : 'Make a one-pager for residents'}</button></div>
+    </section>
     ${missing.length ? `<p class="lede no-print">Not in the plan yet: ${missing.map((s) => esc(s.title)).join(', ')}. <a href="#" data-act="back">Go back to the conversation</a> to cover them, then rewrite.</p>` : ''}
     ${footer()}
+  </div>`;
+}
+
+function byPerson() {
+  const groups = new Map();
+  for (const o of state.open) {
+    const key = o.who || 'Not given to anyone yet';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  }
+  // Named people first, the unassigned pile last
+  return [...groups].sort((a, b) => (a[0] === 'Not given to anyone yet') - (b[0] === 'Not given to anyone yet'));
+}
+
+function conversationsHtml() {
+  if (!state.open.length) return '';
+  return `<section class="plan-section talks"><h2>Conversations to have this week</h2>
+    ${byPerson().map(([who, items]) => `<div class="talk"><h3>${esc(who)}</h3><ul>${items.map((o) => `<li>${esc(o.text)} <span style="color:var(--soft)">(${esc(topicTitle(o.topic))})</span>${o.wall ? ' <span class="no-print">· <a href="wall" target="_blank" rel="noopener">on the cohort wall</a></span>' : ''}</li>`).join('')}</ul></div>`).join('')}
+  </section>`;
+}
+
+function logHtml() {
+  if (!state.decisions.length) return '';
+  const rows = TOPICS.flatMap((t) => state.decisions.filter((d) => d.topic === t.id).map((d) => `<tr><td>${esc(d.at || '')}</td><td>${esc(t.title)}</td><td>${esc(d.text)}</td><td>${esc(d.by || '')}</td></tr>`));
+  return `<section class="plan-section"><h2>Decision log</h2>
+    <div class="prose"><p>What was locked in, when, and who was in the room. Keep this: it is the memory of how the library was shaped.</p></div>
+    <div class="log-wrap"><table class="log"><thead><tr><th>Date</th><th>Topic</th><th>Decision</th><th>In the room</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+  </section>`;
+}
+
+// ---------- The one-pager for residents ----------
+
+async function makeFlyer() {
+  if (live.flyering) return;
+  live.flyering = true; live.error = null;
+  state.view = 'flyer';
+  render();
+  window.scrollTo(0, 0);
+  try {
+    const text = await stream({
+      action: 'flyer',
+      decisions: state.decisions.map((d) => ({ text: d.text })),
+      open: state.open.map((d) => ({ text: d.text })),
+    }, () => {});
+    const a = text.indexOf('{');
+    const b = text.lastIndexOf('}');
+    const f = JSON.parse(text.slice(a, b + 1));
+    state.flyer = {
+      headline: String(f.headline || ''), invite: String(f.invite || ''), handoff: String(f.handoff || 'Return this to: '),
+      details: (Array.isArray(f.details) ? f.details : []).map(String).slice(0, 3),
+      questions: (Array.isArray(f.questions) ? f.questions : []).slice(0, 4).map((q) => ({ q: String(q.q || ''), options: (Array.isArray(q.options) ? q.options : []).map(String).slice(0, 5) })),
+      translations: (Array.isArray(f.translations) ? f.translations : []).slice(0, 2).map((t) => ({ language: String(t.language || ''), headline: String(t.headline || ''), invite: String(t.invite || '') })),
+    };
+  } catch (err) {
+    live.error = err instanceof SyntaxError ? 'The one-pager came back garbled. Try again.' : err.message;
+    if (!state.flyer) state.view = 'plan';
+  }
+  live.flyering = false;
+  save();
+  render();
+}
+
+function viewFlyer() {
+  const f = state.flyer;
+  if (!f) return `<div class="plan-wrap"><div class="writing-plan" role="status"><div class="writing"><span class="pulse"></span><strong>Writing a one-pager for your residents</strong></div><p class="hint" style="margin:8px 0 0">A few seconds.</p></div></div>`;
+  // Every line can be changed by hand before printing
+  const ed = (path, text, tag = 'span', cls = '') => `<${tag} class="${cls}" contenteditable="true" spellcheck="true" data-flyer="${path}">${esc(text)}</${tag}>`;
+  return `<div class="plan-wrap">
+    <div class="no-print">
+      <div class="pill">For your residents</div>
+      <h1>A one-pager to print</h1>
+      <p class="lede">Made from what you locked in. Click any line to change it. Print it, hand-draw something in the box, and put it under doors or by the laundry.</p>
+      ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
+      <div class="row">
+        <button class="btn" data-act="print">Print</button>
+        <button class="btn dark" data-act="flyer-again" ${live.flyering ? 'disabled' : ''}>${live.flyering ? 'Writing' : 'Write it again'}</button>
+        <button class="btn quiet" data-act="see-plan">Back to the plan</button>
+      </div>
+      ${f.translations.length ? `<p class="hint" style="margin-top:14px">The ${f.translations.map((t) => esc(t.language)).join(' and ')} lines are machine translated. Ask a neighbor who speaks the language to check them before you print.</p>` : ''}
+    </div>
+    <article class="flyer">
+      ${ed('headline', f.headline, 'h2', 'flyer-head')}
+      ${ed('invite', f.invite, 'p', 'flyer-invite')}
+      ${f.translations.map((t, i) => `<div class="flyer-tr" lang="${esc(t.language)}" dir="auto">${ed(`translations.${i}.headline`, t.headline, 'strong')} ${ed(`translations.${i}.invite`, t.invite)}</div>`).join('')}
+      <div class="flyer-mid">
+        <div class="flyer-draw"><span>Space for a drawing by a neighbor</span></div>
+        ${f.details.length ? `<ul class="flyer-details">${f.details.map((d, i) => `<li>${ed(`details.${i}`, d)}</li>`).join('')}</ul>` : ''}
+      </div>
+      <div class="flyer-ask">
+        <div class="banner">Tell us what you think</div>
+        ${f.questions.map((q, i) => `<div class="flyer-q">${ed(`questions.${i}.q`, q.q, 'p')}
+          ${q.options.length ? `<div class="flyer-opts">${q.options.map((o, j) => `<span><i></i>${ed(`questions.${i}.options.${j}`, o)}</span>`).join('')}</div>` : '<div class="flyer-line"></div>'}</div>`).join('')}
+      </div>
+      <div class="flyer-foot">
+        <p>Your name and apartment (if you like): <span class="flyer-blank"></span></p>
+        ${ed('handoff', f.handoff, 'p')}
+      </div>
+    </article>
+    <div class="no-print">${footer()}</div>
   </div>`;
 }
 
@@ -454,7 +602,7 @@ function renderBoard() {
   const editing = (kind, id) => live.editing && live.editing.kind === kind && live.editing.id === id;
   const row = (kind, d) => editing(kind, d.id)
     ? `<li class="${kind === 'open' ? 'parked-item' : ''}"><input type="text" id="edit-input" value="${esc(d.text)}" aria-label="Edit"><button class="mini" data-act="edit-save" aria-label="Save" title="Save">✓</button></li>`
-    : `<li class="${kind === 'open' ? 'parked-item' : ''}${fresh.has(d.id) ? ' fresh' : ''}"><span>${kind === 'open' ? '? ' : ''}${esc(d.text)}</span>
+    : `<li class="${kind === 'open' ? 'parked-item' : ''}${fresh.has(d.id) ? ' fresh' : ''}"><span>${kind === 'open' ? '? ' : ''}${esc(d.text)}${kind === 'open' && d.who ? `<small>Ask: ${esc(d.who)}</small>` : ''}</span>
         <button class="mini" data-act="edit-${kind}" data-id="${d.id}" aria-label="Edit" title="Edit">✎</button>
         <button class="mini" data-act="remove-${kind}" data-id="${d.id}" aria-label="Remove" title="Remove">✕</button></li>`;
   const topics = TOPICS.map((t) => {
@@ -471,11 +619,13 @@ function renderBoard() {
   el.innerHTML = `
     <h2>Your plan so far</h2>
     <div class="sub">${state.decisions.length ? `${state.decisions.length} locked in across ${covered} of ${TOPICS.length} topics` : 'What you lock in lands here. Tap a topic to jump to it.'}</div>
+    <label class="room">In the room today<input type="text" data-room value="${esc(state.room)}" placeholder="Names, so the log shows who decided"></label>
     ${topics}
     <div class="board-foot">
       <button class="btn" data-act="write" ${state.decisions.length && !live.writing && !live.busy ? '' : 'disabled'}>${state.plan ? 'Rewrite my launch plan' : 'Write my launch plan'}</button>
       ${state.plan && state.view === 'chat' ? '<button class="btn dark" data-act="see-plan">See my plan</button>' : ''}
       ${state.decisions.length ? '' : '<span class="hint">Lock in a few things first.</span>'}
+      <a class="btn quiet small" href="wall">See the cohort wall</a>
       <button class="btn quiet small" data-act="reset">Start over</button>
     </div>`;
   document.getElementById('top').innerHTML = `
@@ -492,7 +642,7 @@ function renderBoard() {
 function render() {
   const keep = document.getElementById('say');
   if (keep && !live.draft) live.draft = keep.value;
-  document.getElementById('main').innerHTML = state.view === 'plan' && state.plan ? viewPlan() : viewChat();
+  document.getElementById('main').innerHTML = state.view === 'flyer' ? viewFlyer() : state.view === 'plan' && state.plan ? viewPlan() : viewChat();
   live.draft = '';
   renderBoard();
   fresh.clear();
@@ -515,6 +665,14 @@ function saveEdit() {
   if (!input || !e) return;
   const text = input.value.trim();
   if (e.kind === 'proposal') { const p = findProposal(e.id); if (p && text) lockIn(p, text); }
+  else if (e.kind === 'who') { const o = state.open.find((d) => d.id === e.id); if (o && text) o.who = text; }
+  else if (e.kind === 'team') {
+    const o = state.open.find((d) => d.id === e.id);
+    live.editing = null;
+    if (o && text.length > 1) { try { localStorage.setItem(TEAM, text); } catch { /* still post this once */ } postToWall(o); }
+    else render();
+    return;
+  }
   else {
     const list = e.kind === 'decision' ? state.decisions : state.open;
     const item = list.find((d) => d.id === e.id);
@@ -534,7 +692,18 @@ document.addEventListener('submit', (e) => {
   send(text);
 });
 
-document.addEventListener('input', (e) => { if (e.target.id === 'say') grow(); });
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'say') grow();
+  else if (e.target.dataset.room !== undefined) { state.room = e.target.value; save(); }
+  else if (e.target.dataset.flyer) {
+    // Walk the path ("questions.1.options.0") and store the edited text
+    const path = e.target.dataset.flyer.split('.');
+    let at = state.flyer;
+    for (const key of path.slice(0, -1)) at = at[key];
+    at[path[path.length - 1]] = e.target.textContent;
+    save();
+  }
+});
 
 document.addEventListener('keydown', (e) => {
   if (e.target.id === 'say' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); document.getElementById('form').requestSubmit(); }
@@ -567,6 +736,16 @@ document.addEventListener('click', async (e) => {
       state.topic = id; state.view = 'chat'; live.boardOpen = false;
       send(`Let's talk about ${topicTitle(id).toLowerCase().replace(/^items:.*/, 'the items')}.`);
       break;
+    case 'who': state.open.find((d) => d.id === id).who = el.dataset.who; save(); render(); break;
+    case 'who-clear': state.open.find((d) => d.id === id).who = ''; save(); render(); break;
+    case 'who-other': live.editing = { kind: 'who', id }; render(); break;
+    case 'ask-cohort': {
+      const o = state.open.find((d) => d.id === id);
+      if (team()) postToWall(o); else { live.editing = { kind: 'team', id }; render(); }
+      break;
+    }
+    case 'flyer': if (state.flyer) { state.view = 'flyer'; save(); render(); window.scrollTo(0, 0); } else makeFlyer(); break;
+    case 'flyer-again': makeFlyer(); break;
     case 'board': live.boardOpen = !live.boardOpen; renderBoard(); break;
     case 'write': writePlan(); break;
     case 'see-plan': state.view = 'plan'; live.boardOpen = false; save(); render(); window.scrollTo(0, 0); break;

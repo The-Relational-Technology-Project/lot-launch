@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library of Things cohort wall</title>
+<meta name="description" content="Questions Library of Things Co-Lab teams are working through, and what other teams have decided.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#232D58">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="chat" style="text-decoration:none"><small>Shareable toolkit, in conversation</small><span class="full">Library of Things Launch Plan</span><span class="short">LoT Launch Plan</span></a>
+    <div class="top-actions" style="display:flex"><a class="btn small" href="chat">Back to my plan</a></div>
+  </div>
+  <div class="progress"></div>
+</header>
+<main class="wall" id="main"></main>
+
+<script>
+// The cohort wall: a question one team is stuck on, and what the other teams
+// did. Stored by the lot-plan function (wall_list, wall_post, wall_reply).
+const API = 'https://texakzqqenzpxawktbgx.supabase.co/functions/v1/lot-plan';
+const TEAM = 'lot-launch-team';
+const TOPICS = { project: 'Your project', purpose: 'Purpose and people', residents: 'Resident needs and engagement', space: 'Space and setup', items: 'Items', policies: 'Policies and lending system', people: 'Staffing, volunteers and resident roles', budget: 'Budget and funding', risk: 'Insurance, risk and governance', partners: 'Partners', launch: 'Outreach and launch event', timeline: 'Timeline to opening day' };
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const when = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+let team = '';
+try { team = localStorage.getItem(TEAM) || ''; } catch { /* asked for below */ }
+let posts = null;
+let error = null;
+let busy = false;
+
+async function call(body) {
+  let res;
+  try { res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+  catch { throw new Error('Could not reach the wall. Check your connection and try again.'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Something went wrong. Try again.');
+  return data;
+}
+
+function rememberTeam(value) {
+  team = value.trim();
+  try { localStorage.setItem(TEAM, team); } catch { /* fine for this visit */ }
+}
+
+function postHtml(p) {
+  return `<article class="post">
+    <div class="from"><strong>${esc(p.team)}</strong> asked${p.topic && TOPICS[p.topic] ? ` about ${esc(TOPICS[p.topic].toLowerCase())}` : ''} · ${when(p.created_at)}${p.sample ? '<span class="sample-tag">Example</span>' : ''}</div>
+    <p class="q">${esc(p.body)}</p>
+    ${p.replies.map((r) => `<div class="reply"><div class="from"><strong>${esc(r.team)}</strong> · ${when(r.created_at)}${r.sample ? '<span class="sample-tag">Example</span>' : ''}</div><p>${esc(r.body)}</p></div>`).join('')}
+    <form class="reply-form" data-reply="${p.id}">
+      <textarea rows="1" placeholder="What did your team decide, or try?" aria-label="Reply to ${esc(p.team)}" required minlength="5" maxlength="500"></textarea>
+      <button class="btn dark small" type="submit" ${busy ? 'disabled' : ''}>Reply</button>
+    </form>
+  </article>`;
+}
+
+function render() {
+  document.getElementById('main').innerHTML = `
+    <div class="pill">Co-Lab teams, together</div>
+    <h1>The cohort wall</h1>
+    <p class="lede">Four cities are working out the same questions. Post the one you are stuck on, and tell another team what you decided.</p>
+    <form class="wall-form" id="ask">
+      <label for="team">Who is posting<span class="hint" style="color:inherit;opacity:.85">Your team and city, so others know who to follow up with.</span></label>
+      <input type="text" id="team" value="${esc(team)}" required minlength="2" maxlength="80" placeholder="For example: the Elm Street team, Wilmington">
+      <div class="field"><label for="q">What are you stuck on?</label>
+      <textarea id="q" required minlength="5" maxlength="500" placeholder="One question the other teams might have already answered"></textarea></div>
+      <div class="row"><button class="btn" type="submit" ${busy ? 'disabled' : ''}>Post to the wall</button></div>
+    </form>
+    ${error ? `<div class="error" role="alert">${esc(error)}</div>` : ''}
+    ${posts === null ? '<p class="lede">Loading the wall.</p>' : posts.length ? posts.map(postHtml).join('') : '<p class="lede">Nothing here yet. Be the first to ask.</p>'}
+    <footer>A prototype by the Relational Tech Project for Shareable's Library of Things Co-Lab. Posts are visible to anyone with this link, so leave out anything private.</footer>`;
+}
+
+async function load() {
+  try { posts = (await call({ action: 'wall_list' })).posts; error = null; }
+  catch (err) { posts = posts || []; error = err.message; }
+  render();
+}
+
+document.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (busy) return;
+  const form = e.target;
+  busy = true; error = null;
+  try {
+    if (form.id === 'ask') {
+      rememberTeam(document.getElementById('team').value);
+      const { post } = await call({ action: 'wall_post', team, text: document.getElementById('q').value });
+      posts.unshift(post);
+    } else if (form.dataset.reply) {
+      const fromField = document.getElementById('team').value.trim();
+      if (fromField) rememberTeam(fromField);
+      if (!team) throw new Error('Say who is posting first, in the box at the top.');
+      const { reply } = await call({ action: 'wall_reply', post_id: form.dataset.reply, team, text: form.querySelector('textarea').value });
+      posts.find((p) => p.id === form.dataset.reply).replies.push(reply);
+    }
+  } catch (err) { error = err.message; }
+  busy = false;
+  render();
+  if (error) document.querySelector('.error')?.scrollIntoView({ block: 'center' });
+});
+
+render();
+load();
+</script>
+</body>
+</html>

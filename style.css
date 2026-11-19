@@ -265,3 +265,91 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   .plan-wrap { max-width: none; padding: 0; }
 }
 
+
+/* ---------- People on parked questions, the decision log, the one-pager, the wall ---------- */
+
+.parked-card { margin-top: 10px; background: var(--pink); border-left: 5px solid var(--coral); padding: 10px 12px 10px 14px; }
+.parked-card p { margin: 0 0 6px; font-weight: 500; }
+.parked-card .tag { color: var(--brick); margin-right: 4px; }
+.who-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.who-row .chip { min-height: 36px; padding: 5px 12px; font-size: 0.9rem; }
+.who-row input { flex: 1 1 200px; margin: 0; padding: 8px 10px; }
+.who-row .btn.quiet { padding-left: 0; }
+.locks li small { display: block; font-size: 0.78rem; color: var(--brick); font-weight: 600; margin-top: 2px; }
+.room { display: block; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
+.room input { margin-top: 4px; padding: 8px 10px; font-size: 0.92rem; text-transform: none; letter-spacing: 0; font-weight: 400; border-color: var(--cream); color: var(--navy); }
+.board-foot a.btn.quiet { color: var(--cream); justify-self: start; }
+
+.talks { background: var(--blue-wash); padding: clamp(18px, 3vw, 28px); }
+.talk h3 { font-size: 1.08rem; margin: 16px 0 6px; }
+.talk ul { margin: 0; padding-left: 1.3em; }
+.talk li { margin-bottom: 0.35em; }
+.log-wrap { overflow-x: auto; }
+.log { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.log th { text-align: left; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 2px solid var(--navy); padding: 6px 10px 6px 0; white-space: nowrap; }
+.log td { border-bottom: 1px solid var(--line); padding: 8px 10px 8px 0; vertical-align: top; }
+.log td:first-child { white-space: nowrap; color: var(--soft); }
+
+/* The one-pager: laid out in physical units so the screen matches the paper */
+.flyer { background: #fff; color: #111; border: 1.5px solid var(--navy); margin-top: 28px; padding: 0.55in 0.6in; max-width: 8.5in; font-size: 13pt; line-height: 1.4; }
+.flyer [contenteditable]:hover { background: #fdf4cd; }
+.flyer [contenteditable]:focus { outline: 2px solid var(--yellow); background: #fffbe6; }
+.flyer-head { font-family: var(--sans); font-weight: 700; font-size: clamp(30pt, 7vw, 46pt); line-height: 1.02; letter-spacing: -0.02em; margin: 0 0 0.18in; }
+.flyer-invite { font-size: 15pt; margin: 0 0 0.12in; }
+.flyer-tr { font-size: 12pt; margin: 0 0 0.08in; padding-left: 0.14in; border-left: 4px solid #111; }
+.flyer-mid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3in; margin: 0.22in 0; align-items: stretch; }
+.flyer-draw { border: 2px dashed #999; min-height: 1.7in; display: grid; place-items: center; text-align: center; color: #888; font-size: 10pt; padding: 0.1in; }
+.flyer-details { list-style: none; margin: 0; padding: 0.16in 0.2in; background: #111; color: #fff; font-weight: 600; font-size: 14pt; display: grid; align-content: center; gap: 0.08in; }
+.flyer-details [contenteditable]:hover, .flyer-details [contenteditable]:focus { background: #333; }
+.flyer-ask .banner { font-size: 10pt; background: #111; color: #fff; }
+.flyer-q { margin-top: 0.16in; }
+.flyer-q p { font-weight: 700; margin: 0 0 0.06in; }
+.flyer-opts { display: flex; flex-wrap: wrap; gap: 0.06in 0.3in; }
+.flyer-opts span { display: inline-flex; align-items: center; gap: 0.08in; }
+.flyer-opts i { width: 0.17in; height: 0.17in; border: 1.5px solid #111; flex: none; }
+.flyer-line { border-bottom: 1.5px solid #111; height: 0.32in; }
+.flyer-foot { margin-top: 0.26in; padding-top: 0.14in; border-top: 2px dashed #999; font-size: 11pt; }
+.flyer-foot p { margin: 0 0 0.06in; }
+.flyer-blank { display: inline-block; min-width: 2.6in; border-bottom: 1.5px solid #111; }
+
+.wall { max-width: 760px; margin: 0 auto; padding: clamp(24px, 4vw, 48px) clamp(16px, 4vw, 56px) 80px; }
+.wall-form { background: var(--green); color: var(--cream); padding: clamp(16px, 3vw, 24px); margin-top: 24px; }
+.wall-form label { color: var(--cream); }
+.wall-form input, .wall-form textarea { border-color: var(--cream); color: var(--navy); }
+.post { background: var(--white); border: 1.5px solid var(--navy); border-radius: 4px; padding: 16px 18px; margin-top: 18px; }
+.post .from { font-size: 0.86rem; color: var(--soft); margin-bottom: 4px; }
+.post .from strong { color: var(--navy); }
+.post .q { font-family: var(--serif); font-size: 1.3rem; line-height: 1.3; margin: 0 0 10px; overflow-wrap: anywhere; }
+.reply { background: var(--blue-wash); border-left: 4px solid var(--blue); padding: 10px 14px; margin-top: 8px; overflow-wrap: anywhere; }
+.reply p { margin: 0; }
+.reply-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.reply-form textarea { flex: 1 1 260px; margin: 0; min-height: 48px; }
+.sample-tag { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; background: var(--line); color: var(--navy); padding: 1px 8px; border-radius: 999px; margin-left: 6px; }
+
+@media (max-width: 900px) {
+  .flyer { padding: 20px 16px; font-size: 1rem; margin-left: -4px; margin-right: -4px; }
+  .flyer-mid { grid-template-columns: 1fr; gap: 14px; }
+  .flyer-draw { min-height: 110px; }
+  .flyer-invite { font-size: 1.1rem; }
+  .flyer-details { font-size: 1.05rem; }
+}
+
+@page { margin: 0.5in; }
+@media print {
+  /* Fill the sheet: a handout is read from a few feet away */
+  .flyer { border: 0; margin: 0; padding: 0; max-width: none; font-size: 16pt; }
+  .flyer-head { font-size: 54pt; }
+  .flyer-invite { font-size: 19pt; }
+  .flyer-tr { font-size: 14pt; }
+  .flyer-mid { grid-template-columns: 1fr 1fr; margin: 0.3in 0; }
+  .flyer-draw { min-height: 2.4in; }
+  .flyer-details { font-size: 18pt; }
+  .flyer-q { margin-top: 0.24in; }
+  .flyer-opts i { width: 0.2in; height: 0.2in; }
+  .flyer-line { height: 0.45in; }
+  .flyer-foot { margin-top: 0.35in; font-size: 13pt; }
+  .flyer [contenteditable] { background: none !important; outline: none !important; }
+  .flyer-details, .flyer-ask .banner { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .talks { background: none; padding: 0; }
+  .log { font-size: 9.5pt; }
+}

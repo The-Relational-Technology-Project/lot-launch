@@ -19,6 +19,12 @@
  *         that reacts and asks the next question, then a ===META=== line and
  *         a JSON object with what to lock in, what to park, quick replies and
  *         the topic the next question is about
+ *   { action: 'flyer', decisions, open }
+ *       — a one-page invitation and short survey for residents, as JSON
+ *   { action: 'wall_list' } | { action: 'wall_post', team, topic, text }
+ *   | { action: 'wall_reply', post_id, team, text }
+ *       — the cohort wall: questions one team posts for the others to answer.
+ *         Plain JSON replies, stored in the lot_wall table.
  *   `draft` also takes `decisions`: everything locked in on the board, so a
  *   section written from the conversation knows the rest of the plan.
  *
@@ -212,6 +218,17 @@ Then, on a new line, write exactly ===META=== followed by one JSON object and no
 - chips: 2 to 4 likely short answers to the question you just asked, 6 words or fewer each, written as they would say them. Empty if the question needs a free answer, like a name or a description.
 - topic: the id of the topic your question is about, or "done" when every topic is covered.`;
 
+const FLYER_SHAPE = `Write a one-page handout this team can print and put under doors or on the laundry room wall. Its job is to tell residents a library of things is coming and to ask what they would borrow. It is read in a few seconds by someone who was not looking for it.
+
+Return only one JSON object, nothing before or after it:
+{"headline":"...","invite":"...","details":["..."],"questions":[{"q":"...","options":["..."]}],"handoff":"...","translations":[{"language":"...","headline":"...","invite":"..."}]}
+- headline: 8 words or fewer, the one idea of the page.
+- invite: one or two short sentences saying what a library of things is and that one is coming to this building. Words a ten year old can read.
+- details: up to 3 short lines of what is already locked in that a resident would care about (where, when it opens, that it is free). Only what they locked in. Leave it empty if nothing fits. Never invent a date, a room, a price or a name. Do not say when it opens unless a date or a month is locked in.
+- questions: 3 questions for residents, drawing on what the toolkit says a needs assessment should ask. Each has 3 to 5 short options to tick, or an empty options list for a write-in.
+- handoff: how to give the page back or reach someone, only if they told you. Otherwise exactly "Return this to: ".
+- translations: only if they named languages their residents speak, at most 2: the headline and invite in that language. Otherwise an empty list.`;
+
 const ASK_SHAPE = `Answer their question in under 200 words, from the excerpts only, with citations. If the excerpts do not answer it, say the toolkit does not cover it and suggest who they could ask. No headings.`;
 
 // ---------- CORS and limits ----------
@@ -382,6 +399,52 @@ function excerptBlock(chunks: Chunk[]): string {
     .join('\n\n');
 }
 
+// ---------- The cohort wall ----------
+
+class WallError extends Error {}
+
+const WALL_MAX_POSTS = 300;
+
+async function wallDb(path: string, init: RequestInit = {}): Promise<unknown> {
+  const url = Deno.env.get('SUPABASE_URL') ?? '';
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  const res = await fetch(`${url}/rest/v1/lot_wall${path}`, {
+    ...init,
+    headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'return=representation', ...(init.headers ?? {}) },
+  });
+  if (!res.ok) throw new Error(`lot_wall ${res.status} ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+
+interface WallRow { id: string; parent: string | null; team: string; topic: string | null; body: string; sample: boolean; created_at: string }
+
+async function wall(action: string, body: Record<string, unknown>): Promise<unknown> {
+  const columns = 'select=id,parent,team,topic,body,sample,created_at';
+  if (action === 'wall_list') {
+    const rows = (await wallDb(`?${columns}&hidden=is.false&order=created_at.asc&limit=${WALL_MAX_POSTS * 4}`)) as WallRow[];
+    const posts = rows.filter((r) => !r.parent).map((r) => ({ ...r, replies: rows.filter((x) => x.parent === r.id) }));
+    return { posts: posts.reverse() };
+  }
+  const team = clip(body.team, 80);
+  const text = clip(body.text, 500);
+  if (team.length < 2) throw new WallError('Say who is posting first');
+  if (text.length < 5) throw new WallError('Write a little more first');
+  if (action === 'wall_post') {
+    const topic = Object.keys(SETTLE).includes(String(body.topic)) ? String(body.topic) : null;
+    const [row] = (await wallDb('', { method: 'POST', body: JSON.stringify({ team, topic, body: text }) })) as WallRow[];
+    return { post: { ...row, replies: [] } };
+  }
+  if (action === 'wall_reply') {
+    const parent = String(body.post_id ?? '');
+    if (!/^[0-9a-f-]{36}$/.test(parent)) throw new WallError('Unknown post');
+    const found = (await wallDb(`?select=id&id=eq.${parent}&parent=is.null&hidden=is.false`)) as WallRow[];
+    if (!found.length) throw new WallError('That post is no longer on the wall');
+    const [row] = (await wallDb('', { method: 'POST', body: JSON.stringify({ team, parent, body: text }) })) as WallRow[];
+    return { reply: row };
+  }
+  throw new WallError('Unknown action');
+}
+
 function ndjson(obj: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj) + '\n');
 }
@@ -403,6 +466,20 @@ Deno.serve(async (req) => {
   }
 
   const action = String(body.action ?? '');
+  if (action.startsWith('wall_')) {
+    const who = (req.headers.get('x-forwarded-for') ?? 'unknown').split(',')[0].trim();
+    if (action !== 'wall_list') {
+      const limited = overLimit(who);
+      if (limited) return fail(limited, 429);
+    }
+    try {
+      return new Response(JSON.stringify(await wall(action, body)), { headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    } catch (err) {
+      const message = err instanceof WallError ? err.message : 'The wall is unavailable right now. Try again shortly.';
+      if (!(err instanceof WallError)) console.error('lot-plan wall failed', err);
+      return fail(message, err instanceof WallError ? 400 : 502);
+    }
+  }
   let userText: string;
   let query: string;
   let spec: SectionSpec | undefined;
@@ -473,6 +550,19 @@ Deno.serve(async (req) => {
       history.length ? `THE CONVERSATION SO FAR (most recent last)\n${history.join('\n')}` : '',
       `THEIR MESSAGE\n${message}`,
     ].filter(Boolean).join('\n\n');
+  } else if (action === 'flyer') {
+    spec = SECTIONS.residents;
+    const texts = (value: unknown, max: number) => (Array.isArray(value) ? value : []).slice(0, max)
+      .map((x) => clip((x as Record<string, unknown> | null)?.text, 240)).filter(Boolean);
+    const locked = texts(body.decisions, 80);
+    if (!locked.length) return fail('Lock in a few things first', 400);
+    const parked = texts(body.open, 30);
+    query = [spec.query, spec.query, 'survey questions what would you borrow languages'].join(' ');
+    excerptLimit = [5, 2400];
+    userText = [
+      `WHAT THEY HAVE LOCKED IN\n${locked.map((t) => `- ${t}`).join('\n')}`,
+      parked.length ? `WHAT THEY HAVE NOT DECIDED YET\n${parked.map((t) => `- ${t}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n\n');
   } else if (action === 'ask') {
     const question = clip(body.question, 600);
     if (question.length < 3) return fail('Ask a question first', 400);
@@ -503,7 +593,7 @@ Deno.serve(async (req) => {
       messages: [
         {
           role: 'user',
-          content: `${userText}\n\nTOOLKIT EXCERPTS\n${excerptBlock(excerpts)}\n\n${action === 'draft' ? DRAFT_SHAPE : action === 'turn' ? 'Write your reply, then the ===META=== line and the JSON.' : ASK_SHAPE}`,
+          content: `${userText}\n\nTOOLKIT EXCERPTS\n${excerptBlock(excerpts)}\n\n${action === 'draft' ? DRAFT_SHAPE : action === 'flyer' ? FLYER_SHAPE : action === 'turn' ? 'Write your reply, then the ===META=== line and the JSON.' : ASK_SHAPE}`,
         },
       ],
     }),

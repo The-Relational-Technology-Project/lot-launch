@@ -3,7 +3,7 @@
 A guided workbook for housing developers in Shareable's Library of Things
 Co-Lab. It asks a few questions per section, drafts that part of a launch plan
 from Shareable's [Library of Things Toolkit 2.0](https://www.shareable.net/toolkit/library-of-things/),
-and links every idea back to the place in the toolkit it came from. Like Knowy,
+and links every idea back to the place in the toolkit it came from. Like [Knowy](https://knowy.org), the Outer Sunset's neighborhood agent,
 it answers only from its notes, cites, and says when it does not know. Unlike
 Knowy, the person is always working on their own plan, not asking questions.
 
@@ -19,7 +19,20 @@ Shareable, November 2026.
   parks what is not known yet. Locked decisions collect on a board, and the
   plan is written from the board at the end.
 
-Both use the same server function and the same stylesheet (`style.css`).
+The conversation version also carries four ideas drawn from the Relational Tech
+Project's builder practices (https://relationalbuilder.org/knowledge/):
+
+- **Every parked question gets a person.** "Who would know?" turns unknowns
+  into "conversations to have this week", grouped by who to ask.
+- **A one-pager for residents.** A printable invitation and short survey made
+  from what was locked in, with space for a neighbor's drawing. Paper is
+  relational tech, and the first job is neighbors saying yes.
+- **A decision log.** What was locked in, when, and who was in the room.
+- **The cohort wall** (`/wall`, `wall.html`): a team posts the question it is
+  stuck on, and other teams say what they decided. Stored in the `lot_wall`
+  table (`supabase/migrations/`), reached only through the function.
+
+All pages use the same server function and the same stylesheet (`style.css`).
 
 ## Pieces
 
