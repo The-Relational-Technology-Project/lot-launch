@@ -10,6 +10,17 @@ Knowy, the person is always working on their own plan, not asking questions.
 Made by the Relational Tech Project as a taste of what is possible for
 Shareable, November 2026.
 
+## Two versions
+
+- **The workbook** (`/`, `index.html`): a few questions per section, then a
+  draft of that section to edit.
+- **The conversation** (`/chat`, `chat.html`): one question at a time. The
+  guide reacts with something from the toolkit, suggests what to lock in, and
+  parks what is not known yet. Locked decisions collect on a board, and the
+  plan is written from the board at the end.
+
+Both use the same server function and the same stylesheet (`style.css`).
+
 ## Pieces
 
 - `index.html`: the whole page. No build step. Its look follows shareable.net

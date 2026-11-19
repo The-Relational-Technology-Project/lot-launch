@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Talk through your Library of Things launch plan</title>
+<meta name="description" content="A conversation that builds the launch plan for a library of things in your building, grounded in Shareable's Library of Things Toolkit 2.0.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#232D58">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top no-print" id="top"></header>
+<div class="chat-shell">
+  <main class="chat-main" id="main" tabindex="-1"></main>
+  <aside class="board no-print" id="board" aria-label="Your plan so far"></aside>
+</div>
+
+<script>
+// The conversational version. Same server function as the workbook
+// (supabase/functions/lot-plan): `turn` for each exchange, `draft` to write
+// the plan from what was locked in.
+const API = 'https://texakzqqenzpxawktbgx.supabase.co/functions/v1/lot-plan';
+const TOOLKIT = 'https://www.shareable.net/toolkit/library-of-things/';
+const COVER = 'https://i0.wp.com/www.shareable.net/wp-content/uploads/2026/03/LoT-2-Digital-Toolkit-Cover-2-scaled.png?w=600&quality=80&ssl=1';
+const STORE = 'lot-launch-chat-v1';
+
+const SECTIONS = [
+  { id: 'purpose', title: 'Purpose and people' },
+  { id: 'residents', title: 'Resident needs and engagement' },
+  { id: 'space', title: 'Space and setup' },
+  { id: 'items', title: 'Items: what to stock and how to get them' },
+  { id: 'policies', title: 'Policies and lending system' },
+  { id: 'people', title: 'Staffing, volunteers and resident roles' },
+  { id: 'budget', title: 'Budget and funding' },
+  { id: 'risk', title: 'Insurance, risk and governance' },
+  { id: 'partners', title: 'Partners' },
+  { id: 'launch', title: 'Outreach and launch event' },
+  { id: 'timeline', title: 'Timeline to opening day' },
+];
+const TOPICS = [{ id: 'project', title: 'Your project' }, ...SECTIONS];
+const topicTitle = (id) => (TOPICS.find((t) => t.id === id) || TOPICS[0]).title;
+
+const HELLO = `Hi! I have read Shareable's whole Library of Things Toolkit, so you do not have to hold it all in your head.
+
+We will talk through your launch plan a piece at a time. When something is settled, lock it in and it lands on your plan. Not sure about something? Say so and I will park it for your next 1:1.
+
+To start: who are you, and what building is this for?`;
+
+// ---------- State ----------
+
+function blank() {
+  return { view: 'chat', topic: 'project', turns: {}, messages: [{ role: 'guide', text: HELLO }], decisions: [], open: [], sources: {}, plan: null, n: 0 };
+}
+
+let state = blank();
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+  if (saved && Array.isArray(saved.messages) && saved.messages.length) state = { ...blank(), ...saved };
+} catch { /* a fresh start is fine */ }
+
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode: keep working in memory */ }
+}
+
+const nextId = () => `x${++state.n}`;
+const fresh = new Set();
+const live = { busy: false, error: null, boardOpen: false, editing: null, draft: '', writing: null };
+
+// ---------- Small helpers ----------
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sectionById = (id) => SECTIONS.find((s) => s.id === id);
+const STILL = /^#{2,4}\s*still to figure out\s*$/im;
+
+function splitDraft(md) {
+  const m = STILL.exec(md);
+  if (!m) return { body: md.trim(), open: [] };
+  const open = md.slice(m.index + m[0].length).split('\n').map((l) => l.replace(/^\s*[-*]\s+/, '').trim()).filter(Boolean);
+  return { body: md.slice(0, m.index).trim(), open };
+}
+
+/** Markdown to HTML for the small subset the drafts use. Returns the cited ids in order. */
+function renderMd(md) {
+  const cited = [];
+  const inline = (text) => esc(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<em>$2</em>')
+    .replace(/\[((?:lot-\d+)(?:\s*,\s*lot-\d+)*)\]/g, (_, ids) => ids.split(/\s*,\s*/).map((id) => {
+      const src = state.sources[id];
+      if (!src) return '';
+      if (!cited.includes(id)) cited.push(id);
+      return `<a class="cite" href="${esc(src.url)}" target="_blank" rel="noopener" title="${esc(src.heading)}">${cited.indexOf(id) + 1}</a>`;
+    }).join(''));
+  const out = [];
+  let list = null;
+  let para = [];
+  const flush = () => {
+    if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; }
+    if (list) { out.push(`</${list}>`); list = null; }
+  };
+  for (const raw of md.split('\n')) {
+    const line = raw.trimEnd();
+    let m;
+    if (!line.trim()) { flush(); }
+    else if ((m = /^#{1,4}\s+(.*)$/.exec(line))) { flush(); out.push(`<h3>${inline(m[1])}</h3>`); }
+    else if ((m = /^\s*[-*]\s+(.*)$/.exec(line))) {
+      if (list !== 'ul') { flush(); out.push('<ul>'); list = 'ul'; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) {
+      if (list !== 'ol') { flush(); out.push('<ol>'); list = 'ol'; }
+      out.push(`<li>${inline(m[1])}</li>`);
+    } else {
+      if (list) flush();
+      para.push(line.trim());
+    }
+  }
+  flush();
+  return { html: out.join('\n'), cited };
+}
+
+function sourcesHtml(cited) {
+  if (!cited.length) return '';
+  const items = cited.map((id) => {
+    const s = state.sources[id];
+    const where = [s.section, s.chapter && s.chapter !== s.heading ? s.chapter : ''].filter(Boolean).join(', ');
+    return `<li><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.heading)}</a> <span>${esc(where)}</span></li>`;
+  }).join('');
+  return `<div class="sources"><div class="tag">From the toolkit</div><ol>${items}</ol></div>`;
+}
+
+/** Calls the server and feeds text to onText as it arrives. */
+async function stream(body, onText) {
+  let res;
+  try {
+    res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error('Could not reach the server. Check your connection and try again. Your answers are saved.');
+  }
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Something went wrong. Try again.');
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let finished = false;
+  const handle = (line) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === 'sources') {
+      for (const s of event.sources) state.sources[s.id] = s;
+    } else if (event.type === 'delta') {
+      text += event.text;
+      onText(text);
+    } else if (event.type === 'error') {
+      throw new Error(event.error);
+    } else if (event.type === 'done') {
+      finished = true;
+    }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      handle(buffer.slice(0, nl));
+      buffer = buffer.slice(nl + 1);
+    }
+  }
+  handle(buffer);
+  if (!finished || !text.trim()) throw new Error('The draft stopped part way. Try again.');
+  return text;
+}
+
+const META = '===META===';
+/** What to show while a reply is still arriving: everything before the meta line */
+function visible(text) {
+  const cut = text.indexOf('===');
+  return (cut >= 0 ? text.slice(0, cut) : text).trim();
+}
+
+function parseMeta(text) {
+  const at = text.indexOf(META);
+  if (at < 0) return {};
+  const raw = text.slice(at + META.length);
+  const a = raw.indexOf('{');
+  const b = raw.lastIndexOf('}');
+  if (a < 0 || b < a) return {};
+  try { return JSON.parse(raw.slice(a, b + 1)); } catch { return {}; }
+}
+
+const validTopic = (id) => TOPICS.some((t) => t.id === id);
+const same = (a, b) => a.trim().toLowerCase().replace(/[.!?]+$/, '') === b.trim().toLowerCase().replace(/[.!?]+$/, '');
+
+function toBottom() {
+  requestAnimationFrame(() => window.scrollTo({ top: document.documentElement.scrollHeight }));
+}
+
+// ---------- Actions ----------
+
+async function send(text) {
+  text = text.trim();
+  if (!text || live.busy) return;
+  const history = state.messages.slice(-8).map((m) => ({ role: m.role, text: m.text }));
+  state.messages.push({ role: 'you', text });
+  live.busy = true; live.error = null; live.draft = '';
+  save();
+  render();
+  toBottom();
+  try {
+    const full = await stream({
+      action: 'turn', topic: state.topic, turns: state.turns[state.topic] || 0, message: text, history,
+      decisions: state.decisions.map((d) => ({ topic: d.topic, text: d.text })),
+      open: state.open.map((d) => ({ topic: d.topic, text: d.text })),
+    }, (t) => {
+      const el = document.getElementById('arriving');
+      if (el) { el.innerHTML = renderMd(visible(t)).html || el.innerHTML; }
+    });
+    const meta = parseMeta(full);
+    const lock = (Array.isArray(meta.lock) ? meta.lock : []).filter((d) => d && d.text)
+      .map((d) => ({ id: nextId(), topic: validTopic(d.topic) ? d.topic : state.topic, text: String(d.text).trim(), status: 'pending' }))
+      .filter((p) => !state.decisions.some((d) => same(d.text, p.text)));
+    for (const p of lock) fresh.add(p.id);
+    const parked = [];
+    for (const o of Array.isArray(meta.open) ? meta.open : []) {
+      if (!o || !o.text || state.open.some((d) => same(d.text, String(o.text)))) continue;
+      const item = { id: nextId(), topic: validTopic(o.topic) ? o.topic : state.topic, text: String(o.text).trim() };
+      state.open.push(item);
+      fresh.add(item.id);
+      parked.push(item.text);
+    }
+    state.turns[state.topic] = (state.turns[state.topic] || 0) + 1;
+    const done = meta.topic === 'done';
+    if (validTopic(meta.topic)) state.topic = meta.topic;
+    state.messages.push({
+      role: 'guide', text: visible(full), proposals: lock, parked, done,
+      chips: (Array.isArray(meta.chips) ? meta.chips : []).map(String).filter((c) => c && c.length <= 60).slice(0, 4),
+    });
+  } catch (err) {
+    // Put their words back in the box so nothing is lost
+    state.messages.pop();
+    live.error = err.message;
+    live.draft = text;
+  }
+  live.busy = false;
+  save();
+  render();
+  // Start reading at the top of the reply, not the bottom of its lock-in cards
+  const replies = document.querySelectorAll('.msg.guide');
+  if (live.error || !replies.length) toBottom();
+  else requestAnimationFrame(() => replies[replies.length - 1].scrollIntoView({ block: 'start' }));
+  if (!matchMedia('(max-width: 900px)').matches) document.getElementById('say')?.focus();
+}
+
+function findProposal(id) {
+  for (const m of state.messages) for (const p of m.proposals || []) if (p.id === id) return p;
+  return null;
+}
+
+function lockIn(p, text) {
+  p.text = (text || p.text).trim();
+  if (!p.text) return;
+  p.status = 'locked';
+  if (!state.decisions.some((d) => same(d.text, p.text))) {
+    const d = { id: nextId(), topic: p.topic, text: p.text };
+    state.decisions.push(d);
+    fresh.add(d.id);
+  }
+}
+
+async function writePlan() {
+  if (live.writing || !state.decisions.length) return;
+  const facts = state.decisions.filter((d) => d.topic === 'project').map((d) => d.text).join(' ');
+  const todo = SECTIONS.filter((s) => state.decisions.some((d) => d.topic === s.id) || state.open.some((d) => d.topic === s.id));
+  if (!todo.length) { live.error = 'Lock in something beyond the basics first, then I can write the plan.'; render(); return; }
+  const plan = { sections: {}, facts: state.decisions.filter((d) => d.topic === 'project').map((d) => d.text) };
+  live.writing = { done: 0, total: todo.length, failed: [] };
+  live.error = null; live.boardOpen = false;
+  state.view = 'chat';
+  render();
+  toBottom();
+  const queue = [...todo];
+  const worker = async () => {
+    while (queue.length) {
+      const s = queue.shift();
+      const mine = state.decisions.filter((d) => d.topic === s.id).map((d) => d.text);
+      const parked = state.open.filter((d) => d.topic === s.id).map((d) => d.text);
+      try {
+        const text = await stream({
+          action: 'draft', section: s.id, project: { building: facts },
+          answers: [
+            { q: 'What we have locked in for this part of the plan', a: mine.join(' ') },
+            { q: 'What we said we still do not know', a: parked.join(' ') },
+          ],
+          decisions: state.decisions.map((d) => ({ text: d.text })),
+        }, () => {});
+        plan.sections[s.id] = text.trim();
+      } catch { live.writing.failed.push(s.title); }
+      live.writing.done += 1;
+      const el = document.getElementById('writing-count');
+      if (el) el.textContent = `${live.writing.done} of ${live.writing.total} sections written`;
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  const failed = live.writing.failed;
+  live.writing = null;
+  if (Object.keys(plan.sections).length) {
+    state.plan = plan;
+    state.view = 'plan';
+    if (failed.length) live.error = `Could not write: ${failed.join(', ')}. The rest is here. Try "Rewrite the plan" in a moment.`;
+  } else {
+    live.error = 'Could not write the plan just now. Check your connection and try again.';
+  }
+  save();
+  render();
+  if (state.view === 'plan') window.scrollTo(0, 0); else toBottom();
+}
+
+function planMarkdown() {
+  const plan = state.plan;
+  const lines = ['# Library of Things Launch Plan', ''];
+  for (const f of plan.facts || []) lines.push(`- ${f}`);
+  lines.push('');
+  const cited = [];
+  const open = [];
+  for (const s of SECTIONS) {
+    const md = plan.sections[s.id];
+    if (!md) continue;
+    const parts = splitDraft(md);
+    lines.push(`## ${s.title}`, '', parts.body, '');
+    for (const o of parts.open) open.push(`${o.replace(/\s*\[lot-[\d,\slot-]*\]/g, '')} (${s.title})`);
+    for (const m of md.matchAll(/lot-\d+/g)) if (state.sources[m[0]] && !cited.includes(m[0])) cited.push(m[0]);
+  }
+  if (open.length) lines.push('## Still to figure out', '', ...open.map((o) => `- ${o}`), '');
+  if (cited.length) {
+    lines.push('## From the toolkit', '');
+    for (const id of cited) lines.push(`- [${id}] ${state.sources[id].heading}: ${state.sources[id].url}`);
+    lines.push('');
+  }
+  lines.push(`Drafted with the Library of Things Launch Plan prototype, built on the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0): ${TOOLKIT}`);
+  return lines.join('\n');
+}
+
+// ---------- Views ----------
+
+function footer() {
+  return `<footer>
+    Built on the <a href="${TOOLKIT}" target="_blank" rel="noopener">Library of Things Toolkit 2.0</a> by Shareable (CC BY-NC-ND 4.0).
+    A prototype by the Relational Tech Project. Drafts are a starting point: check anything about insurance, legal or money with your own advisors.
+    <span class="no-print">Your conversation stays in this browser. It is sent to an AI model only to reply and to write your plan.</span>
+    <span class="no-print">Rather fill it in step by step? <a href="./">Try the workbook version</a>.</span>
+  </footer>`;
+}
+
+function proposalHtml(p) {
+  if (live.editing && live.editing.kind === 'proposal' && live.editing.id === p.id) {
+    return `<div class="proposal"><input type="text" id="edit-input" value="${esc(p.text)}" aria-label="Edit before locking in">
+      <div class="acts"><button class="btn small" data-act="edit-save">Lock in</button><button class="btn quiet small" data-act="edit-cancel">Cancel</button></div></div>`;
+  }
+  if (p.status !== 'pending') return `<div class="proposal ${p.status}"><p>${esc(p.text)}</p></div>`;
+  return `<div class="proposal${fresh.has(p.id) ? ' fresh' : ''}"><p>${esc(p.text)}</p>
+    <div class="acts">
+      <button class="btn small" data-act="lock" data-id="${p.id}">Lock in</button>
+      <button class="btn quiet small" data-act="edit-proposal" data-id="${p.id}">Edit</button>
+      <button class="btn quiet small" data-act="skip" data-id="${p.id}">Skip</button>
+    </div></div>`;
+}
+
+function messageHtml(m, i) {
+  if (m.role === 'you') return `<div class="msg you">${esc(m.text)}</div>`;
+  const r = renderMd(m.text);
+  const pending = (m.proposals || []).filter((p) => p.status === 'pending');
+  return `<div class="msg guide">
+    <div class="who">Guide</div>
+    <div class="bubble"><div class="prose">${r.html}</div>${sourcesHtml(r.cited)}</div>
+    ${(m.proposals || []).length ? `<div class="proposals">
+      ${pending.length > 1 ? `<button class="btn dark small lock-all" data-act="lock-all" data-i="${i}">Lock in all ${pending.length}</button>` : ''}
+      ${m.proposals.map(proposalHtml).join('')}</div>` : ''}
+    ${(m.parked || []).length ? `<div class="parked">Parked for later: ${m.parked.map(esc).join(' ')}</div>` : ''}
+    ${m.done && !live.writing ? `<div class="cta"><p>Your board has what it needs. Ready when you are.</p><button class="btn" data-act="write">Write my launch plan</button></div>` : ''}
+  </div>`;
+}
+
+function viewChat() {
+  const last = state.messages[state.messages.length - 1];
+  const chips = !live.busy && !live.writing && last && last.role === 'guide' ? (last.chips || []) : [];
+  const first = state.messages.length === 1;
+  return `<div class="thread" id="thread" aria-live="polite">
+      <div class="intro">
+        <div>
+          <div class="pill">For Co-Lab teams</div>
+          <h1>Talk through your launch plan</h1>
+          <p>A conversation, grounded in Shareable's Library of Things Toolkit. Lock in what you decide, and leave with a written plan.</p>
+        </div>
+        <a href="${TOOLKIT}" target="_blank" rel="noopener" aria-label="The Library of Things Toolkit, second edition, by Shareable"><img src="${COVER}" alt="Cover of The Library of Things Toolkit, second edition, by Shareable" width="600" height="400" onerror="this.parentNode.remove()"></a>
+      </div>
+      ${state.messages.map(messageHtml).join('')}
+      ${live.busy ? `<div class="msg guide"><div class="who">Guide</div><div class="bubble"><div class="prose" id="arriving"><span class="dots" aria-label="Thinking"><i></i><i></i><i></i></span></div></div></div>` : ''}
+      ${live.writing ? `<div class="writing-plan" role="status"><div class="writing"><span class="pulse"></span><strong>Writing your launch plan from the board</strong></div><p id="writing-count" style="margin:8px 0 0">${live.writing.done} of ${live.writing.total} sections written</p><p class="hint" style="margin:4px 0 0">About half a minute. Each section is checked against the toolkit.</p></div>` : ''}
+      ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
+    </div>
+    <div class="composer no-print">
+      <div class="composer-in">
+        ${chips.length ? `<div class="chips">${chips.map((c) => `<button class="chip" data-chip="${esc(c)}">${esc(c)}</button>`).join('')}${chips.some((c) => /not sure/i.test(c)) ? '' : '<button class="chip unsure" data-chip="Not sure yet">Not sure yet</button>'}</div>` : ''}
+        <form class="send-row" id="form">
+          <textarea id="say" rows="1" placeholder="${first ? 'Tell me about your building' : 'Answer, or ask a question'}" aria-label="Your message" ${live.writing ? 'disabled' : ''}>${esc(live.draft)}</textarea>
+          <button class="btn" type="submit" ${live.busy || live.writing ? 'disabled' : ''}>Send</button>
+        </form>
+      </div>
+    </div>`;
+}
+
+function viewPlan() {
+  const plan = state.plan;
+  const open = [];
+  const missing = SECTIONS.filter((s) => !plan.sections[s.id]);
+  const body = SECTIONS.filter((s) => plan.sections[s.id]).map((s) => {
+    const parts = splitDraft(plan.sections[s.id]);
+    for (const o of parts.open) open.push({ text: o.replace(/\s*\[lot-[\d,\slot-]*\]/g, ''), from: s.title });
+    const r = renderMd(parts.body);
+    return `<section class="plan-section"><h2>${esc(s.title)}</h2><div class="prose">${r.html}</div>${sourcesHtml(r.cited)}</section>`;
+  }).join('');
+  return `<div class="plan-wrap">
+    <div class="pill">Your plan</div>
+    <h1>Library of Things Launch Plan</h1>
+    ${(plan.facts || []).length ? `<div class="prose" style="margin-top:16px"><ul>${plan.facts.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></div>` : ''}
+    ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
+    <div class="row no-print">
+      <button class="btn" data-act="print">Print or save as PDF</button>
+      <button class="btn dark" data-act="copy">Copy as text</button>
+      <button class="btn dark" data-act="download">Download</button>
+    </div>
+    <div class="row no-print" style="margin-top:6px">
+      <button class="btn quiet" data-act="back">Back to the conversation</button>
+      <button class="btn quiet" data-act="write">Rewrite the plan</button>
+    </div>
+    ${body}
+    ${open.length ? `<section class="plan-section open-qs"><h2>Still to figure out</h2>
+      <div class="prose"><p>Bring these to your team, your residents, or your next 1:1 with Shareable.</p>
+      <ul>${open.map((o) => `<li>${esc(o.text)} <span style="color:var(--soft)">(${esc(o.from)})</span></li>`).join('')}</ul></div></section>` : ''}
+    ${missing.length ? `<p class="lede no-print">Not in the plan yet: ${missing.map((s) => esc(s.title)).join(', ')}. <a href="#" data-act="back">Go back to the conversation</a> to cover them, then rewrite.</p>` : ''}
+    ${footer()}
+  </div>`;
+}
+
+function renderBoard() {
+  const covered = TOPICS.filter((t) => state.decisions.some((d) => d.topic === t.id) || state.open.some((d) => d.topic === t.id)).length;
+  const editing = (kind, id) => live.editing && live.editing.kind === kind && live.editing.id === id;
+  const row = (kind, d) => editing(kind, d.id)
+    ? `<li class="${kind === 'open' ? 'parked-item' : ''}"><input type="text" id="edit-input" value="${esc(d.text)}" aria-label="Edit"><button class="mini" data-act="edit-save" aria-label="Save" title="Save">✓</button></li>`
+    : `<li class="${kind === 'open' ? 'parked-item' : ''}${fresh.has(d.id) ? ' fresh' : ''}"><span>${kind === 'open' ? '? ' : ''}${esc(d.text)}</span>
+        <button class="mini" data-act="edit-${kind}" data-id="${d.id}" aria-label="Edit" title="Edit">✎</button>
+        <button class="mini" data-act="remove-${kind}" data-id="${d.id}" aria-label="Remove" title="Remove">✕</button></li>`;
+  const topics = TOPICS.map((t) => {
+    const locks = state.decisions.filter((d) => d.topic === t.id);
+    const parked = state.open.filter((d) => d.topic === t.id);
+    const count = locks.length ? `${locks.length} locked` : parked.length ? 'parked' : '';
+    return `<div class="topic ${state.topic === t.id && state.view === 'chat' ? 'current' : ''}">
+      <button class="topic-head" data-act="talk" data-id="${t.id}" title="Talk about this"><span>${esc(t.title)}</span><span class="n">${count}</span></button>
+      ${locks.length || parked.length ? `<ul class="locks">${locks.map((d) => row('decision', d)).join('')}${parked.map((d) => row('open', d)).join('')}</ul>` : ''}
+    </div>`;
+  }).join('');
+  const el = document.getElementById('board');
+  el.className = 'board no-print' + (live.boardOpen ? ' open' : '');
+  el.innerHTML = `
+    <h2>Your plan so far</h2>
+    <div class="sub">${state.decisions.length ? `${state.decisions.length} locked in across ${covered} of ${TOPICS.length} topics` : 'What you lock in lands here. Tap a topic to jump to it.'}</div>
+    ${topics}
+    <div class="board-foot">
+      <button class="btn" data-act="write" ${state.decisions.length && !live.writing && !live.busy ? '' : 'disabled'}>${state.plan ? 'Rewrite my launch plan' : 'Write my launch plan'}</button>
+      ${state.plan && state.view === 'chat' ? '<button class="btn dark" data-act="see-plan">See my plan</button>' : ''}
+      ${state.decisions.length ? '' : '<span class="hint">Lock in a few things first.</span>'}
+      <button class="btn quiet small" data-act="reset">Start over</button>
+    </div>`;
+  document.getElementById('top').innerHTML = `
+    <div class="top-in">
+      <a class="brand" href="./" style="text-decoration:none" title="Library of Things Launch Plan"><small>Shareable toolkit, in conversation</small><span class="full">Library of Things Launch Plan</span><span class="short">LoT Launch Plan</span></a>
+      <div class="top-actions">
+        <button class="btn small" data-act="board" aria-expanded="${live.boardOpen}" aria-controls="board">${live.boardOpen ? 'Close' : `Plan${state.decisions.length ? ` · ${state.decisions.length}` : ''}`}</button>
+      </div>
+    </div>
+    <div class="progress" role="progressbar" aria-label="Topics covered" aria-valuemin="0" aria-valuemax="${TOPICS.length}" aria-valuenow="${covered}"><i style="width:${(covered / TOPICS.length) * 100}%"></i></div>`;
+  document.body.style.overflow = live.boardOpen && matchMedia('(max-width: 900px)').matches ? 'hidden' : '';
+}
+
+function render() {
+  const keep = document.getElementById('say');
+  if (keep && !live.draft) live.draft = keep.value;
+  document.getElementById('main').innerHTML = state.view === 'plan' && state.plan ? viewPlan() : viewChat();
+  live.draft = '';
+  renderBoard();
+  fresh.clear();
+  grow();
+  document.getElementById('edit-input')?.focus();
+}
+
+function grow() {
+  const t = document.getElementById('say');
+  if (!t) return;
+  t.style.height = 'auto';
+  t.style.height = Math.min(180, t.scrollHeight + 2) + 'px';
+}
+
+// ---------- Events ----------
+
+function saveEdit() {
+  const input = document.getElementById('edit-input');
+  const e = live.editing;
+  if (!input || !e) return;
+  const text = input.value.trim();
+  if (e.kind === 'proposal') { const p = findProposal(e.id); if (p && text) lockIn(p, text); }
+  else {
+    const list = e.kind === 'decision' ? state.decisions : state.open;
+    const item = list.find((d) => d.id === e.id);
+    if (item && text) item.text = text;
+  }
+  live.editing = null;
+  save();
+  render();
+}
+
+document.addEventListener('submit', (e) => {
+  if (e.target.id !== 'form') return;
+  e.preventDefault();
+  const t = document.getElementById('say');
+  const text = t.value;
+  t.value = '';
+  send(text);
+});
+
+document.addEventListener('input', (e) => { if (e.target.id === 'say') grow(); });
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'say' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); document.getElementById('form').requestSubmit(); }
+  if (e.target.id === 'edit-input' && e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+  if (e.key === 'Escape') {
+    if (live.editing) { live.editing = null; render(); }
+    else if (live.boardOpen) { live.boardOpen = false; renderBoard(); }
+  }
+});
+
+document.addEventListener('click', async (e) => {
+  const chip = e.target.closest('[data-chip]');
+  if (chip) { send(chip.dataset.chip); return; }
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const id = el.dataset.id;
+  switch (el.dataset.act) {
+    case 'lock': lockIn(findProposal(id)); save(); render(); break;
+    case 'lock-all': for (const p of state.messages[Number(el.dataset.i)].proposals) if (p.status === 'pending') lockIn(p); save(); render(); break;
+    case 'skip': findProposal(id).status = 'skipped'; save(); render(); break;
+    case 'edit-proposal': live.editing = { kind: 'proposal', id }; render(); break;
+    case 'edit-decision': live.editing = { kind: 'decision', id }; render(); break;
+    case 'edit-open': live.editing = { kind: 'open', id }; render(); break;
+    case 'edit-save': saveEdit(); break;
+    case 'edit-cancel': live.editing = null; render(); break;
+    case 'remove-decision': state.decisions = state.decisions.filter((d) => d.id !== id); save(); render(); break;
+    case 'remove-open': state.open = state.open.filter((d) => d.id !== id); save(); render(); break;
+    case 'talk':
+      if (live.busy || live.writing) break;
+      state.topic = id; state.view = 'chat'; live.boardOpen = false;
+      send(`Let's talk about ${topicTitle(id).toLowerCase().replace(/^items:.*/, 'the items')}.`);
+      break;
+    case 'board': live.boardOpen = !live.boardOpen; renderBoard(); break;
+    case 'write': writePlan(); break;
+    case 'see-plan': state.view = 'plan'; live.boardOpen = false; save(); render(); window.scrollTo(0, 0); break;
+    case 'back': e.preventDefault(); state.view = 'chat'; live.error = null; save(); render(); toBottom(); break;
+    case 'reset':
+      if (confirm('Start over? This clears the conversation and your plan from this browser.')) { state = blank(); live.boardOpen = false; live.error = null; save(); render(); window.scrollTo(0, 0); }
+      break;
+    case 'print': window.print(); break;
+    case 'copy':
+      try { await navigator.clipboard.writeText(planMarkdown()); el.textContent = 'Copied'; }
+      catch { el.textContent = 'Copy failed, use Download'; }
+      setTimeout(() => { el.textContent = 'Copy as text'; }, 1800);
+      break;
+    case 'download': {
+      const url = URL.createObjectURL(new Blob([planMarkdown()], { type: 'text/markdown' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'library-of-things-launch-plan.md' });
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      break;
+    }
+  }
+});
+
+render();
+if (state.view === 'chat' && state.messages.length > 1) toBottom();
+</script>
+</body>
+</html>

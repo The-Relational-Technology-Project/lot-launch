@@ -14,6 +14,13 @@
  *       — draft (or redraft, when `current`/`note` are given) one plan section
  *   { action: 'ask', question, project? }
  *       — answer one question from the toolkit
+ *   { action: 'turn', topic, message, history, decisions, open, turns }
+ *       — one turn of the conversational version (chat.html): a short reply
+ *         that reacts and asks the next question, then a ===META=== line and
+ *         a JSON object with what to lock in, what to park, quick replies and
+ *         the topic the next question is about
+ *   `draft` also takes `decisions`: everything locked in on the board, so a
+ *   section written from the conversation knows the rest of the plan.
  *
  * Replies as newline-delimited JSON so the draft appears as it is written:
  *   {"type":"sources","sources":[{id, heading, section, chapter, url}]}
@@ -44,8 +51,10 @@ const MAX_TOKENS = 4096;
 const ALLOWED_ORIGINS = (Deno.env.get('LOT_PLAN_ORIGINS') ?? 'https://lot-launch.vercel.app')
   .split(',').map((o) => o.trim()).filter(Boolean);
 const ALLOWED_PATTERN = /^(https:\/\/lot-launch[a-z0-9-]*\.vercel\.app|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?)$/;
-const PER_ADDRESS_PER_HOUR = 40;
-const PER_DAY = 600;
+// A whole conversation is 30 to 40 short turns plus eleven drafts, and a
+// workshop room can share one address
+const PER_ADDRESS_PER_HOUR = 400;
+const PER_DAY = 3000;
 const MAX_FIELD_CHARS = 1500;
 const MAX_EXCERPTS = 8;
 const MAX_EXCERPT_WORDS = 4200;
@@ -161,6 +170,48 @@ End with exactly this heading and a list of 1 to 3 items, the ones that matter m
 ### Still to figure out
 - (a decision, a number or a conversation this section still needs, written so they can take it to their team, residents or Shareable)`;
 
+// ---------- The conversational version (chat.html) ----------
+
+/** What each topic needs settled before the guide moves on */
+const SETTLE: Record<string, string> = {
+  project: 'Who they are (organization, city), the building (kind of housing, how many homes, who lives there), and when they hope to open.',
+  purpose: 'Why this building needs it, who it is for (residents only or neighbors too), and who carries it day to day.',
+  residents: 'How residents have been or will be asked what they want, who is hard to reach, and how residents keep a say.',
+  space: 'Where it lives, how big, who holds the key, when it is open, and what must change in the room first.',
+  items: 'The first items to stock, where they come from, and who cleans and repairs them.',
+  policies: 'Who can borrow, for how long, at what cost, what happens with late or broken items, and how loans are tracked.',
+  people: 'Staff hours, what roles residents or volunteers hold, any stipend, and how people are trained.',
+  budget: 'Opening costs, yearly running costs, and where the money comes from.',
+  risk: 'What their insurer or lawyer has said, which items worry them, and who makes decisions.',
+  partners: 'Who they already work with, what they need from a partner, and what they offer back.',
+  launch: 'How residents hear about things, what opening day looks like, and a name if they have one.',
+  timeline: 'What is done, what must happen first, fixed dates or approvals, and who owns the timeline.',
+};
+
+const PROJECT_TOPIC: SectionSpec = {
+  title: 'Your project',
+  brief: 'The basics about the organization, the building and the people who live there.',
+  query: 'apartment building residents housing community getting started',
+  lift: ['Section 1', 'Section 3'],
+};
+
+const TURN_SYSTEM = `You are the guide in a conversation with a housing developer team planning a library of things in one of their buildings. They finished Shareable's Library of Things Co-Lab and are opening by the end of spring. You have read Shareable's Library of Things Toolkit 2.0 and draw on it, and only on it. The conversation walks through the topics of a launch plan. What gets settled is locked in on a board beside the chat, and the plan is written from the board at the end.
+
+Each turn, write a short reply in two moves:
+1. React to what they just said, in one to three sentences. Bring one concrete, useful thing from the toolkit excerpts that fits their situation: what another library did, a caution, a tip. Name the library when it is an example. Cite it with the excerpt id in square brackets, like [lot-042]. If no excerpt fits, just acknowledge what they said in a few words. Never invent costs, legal or insurance requirements, statistics, or names.
+2. Ask one next question. One, not two. Stay on the current topic until what it needs settled is mostly covered, or they have had about three exchanges on it. Then move to the next topic that is not covered yet, and say so in a few words ("Next up: budget."). If they say they do not know, do not press: park it and move on. When every topic is covered, tell them the board is ready and they can write the plan.
+
+If they ask you a question instead of answering, answer it first from the excerpts in a sentence or two, or say plainly that the toolkit does not cover it, then carry on. If they name a topic they want to talk about, go there.
+
+Voice: a warm, practical colleague who has read the whole toolkit. Plain words, a little personality, no flattery, no em-dashes, no lists, no headings. Under 90 words.
+
+Then, on a new line, write exactly ===META=== followed by one JSON object and nothing after it:
+{"lock":[{"topic":"id","text":"..."}],"open":[{"topic":"id","text":"..."}],"chips":["..."],"topic":"id"}
+- lock: what their last message settled, as short statements in their voice ("We will open two evenings a week and Saturday mornings."), 20 words or fewer each, one fact or decision per item, at most 4. Only what they actually said. Never add anything from the toolkit or your own suggestions. Do not repeat what is already locked. Empty if their message settled nothing.
+- open: things they said they do not know or still need to find out, each as a short question, at most 2. Empty if none.
+- chips: 2 to 4 likely short answers to the question you just asked, 6 words or fewer each, written as they would say them. Empty if the question needs a free answer, like a name or a description.
+- topic: the id of the topic your question is about, or "done" when every topic is covered.`;
+
 const ASK_SHAPE = `Answer their question in under 200 words, from the excerpts only, with citations. If the excerpts do not answer it, say the toolkit does not cover it and suggest who they could ask. No headings.`;
 
 // ---------- CORS and limits ----------
@@ -192,7 +243,7 @@ function overLimit(address: string): string | null {
     hourly.set(address, { count: 1, start: now });
   } else {
     bucket.count += 1;
-    if (bucket.count > PER_ADDRESS_PER_HOUR) return 'That is a lot of drafts in one hour. Take a break and try again shortly.';
+    if (bucket.count > PER_ADDRESS_PER_HOUR) return 'That is a lot in one hour. Take a break and try again shortly.';
   }
   daily.count += 1;
   return null;
@@ -254,7 +305,7 @@ function buildIndex(): Index {
   return { chunks, tf, len, avgLen, df };
 }
 
-function search(index: Index, query: string, spec?: SectionSpec): Chunk[] {
+function search(index: Index, query: string, spec?: SectionSpec, maxExcerpts = MAX_EXCERPTS, maxWords = MAX_EXCERPT_WORDS): Chunk[] {
   const qCounts = new Map<string, number>();
   for (const t of tokens(query)) qCounts.set(t, (qCounts.get(t) ?? 0) + 1);
   const n = index.chunks.length;
@@ -285,7 +336,7 @@ function search(index: Index, query: string, spec?: SectionSpec): Chunk[] {
   const perChapter = new Map<string, number>();
   let words = 0;
   const take = (c: Chunk, pinned = false) => {
-    if (seen.has(c.id) || picked.length >= MAX_EXCERPTS || words + c.words > MAX_EXCERPT_WORDS) return;
+    if (seen.has(c.id) || picked.length >= maxExcerpts || words + c.words > maxWords) return;
     // One chapter should not crowd out the rest of what a section needs
     const chapterKey = `${c.section}/${c.chapter}`;
     const fromChapter = perChapter.get(chapterKey) ?? 0;
@@ -321,7 +372,7 @@ const PROJECT_LABELS: [string, string][] = [
 
 function projectBlock(project: unknown): string {
   const p = (project && typeof project === 'object' ? project : {}) as Record<string, unknown>;
-  const lines = PROJECT_LABELS.map(([key, label]) => `${label}: ${clip(p[key], 800) || '(not answered)'}`);
+  const lines = PROJECT_LABELS.map(([key, label]) => `${label}: ${clip(p[key], 1500) || '(not answered)'}`);
   return lines.join('\n');
 }
 
@@ -355,6 +406,7 @@ Deno.serve(async (req) => {
   let userText: string;
   let query: string;
   let spec: SectionSpec | undefined;
+  let excerptLimit: [number, number] = [MAX_EXCERPTS, MAX_EXCERPT_WORDS];
 
   if (action === 'draft') {
     spec = SECTIONS[String(body.section ?? '')];
@@ -370,14 +422,56 @@ Deno.serve(async (req) => {
     const current = clip(body.current, 6000);
     const note = clip(body.note, 600);
     const project = projectBlock(body.project);
+    const everything = (Array.isArray(body.decisions) ? body.decisions : []).slice(0, 80)
+      .map((x) => clip((x as Record<string, unknown> | null)?.text, 240)).filter(Boolean);
     query = [spec.query, spec.query, answers.map((x) => x.a).join(' '), note].join(' ');
     userText = [
       `THEIR PROJECT\n${project}`,
       done.length ? `ALREADY IN THEIR PLAN (the start of each finished section)\n${done.join('\n')}` : '',
+      everything.length ? `EVERYTHING THEY HAVE LOCKED IN ACROSS THE PLAN (for context; write only this section)\n${everything.map((t) => `- ${t}`).join('\n')}` : '',
       `THIS SECTION: ${spec.title}\n${spec.brief}`,
       `THEIR ANSWERS\n${answers.map((x) => `Q: ${x.q}\nA: ${x.a || '(left blank)'}`).join('\n\n')}`,
       current ? `THE DRAFT THEY HAVE NOW\n${current}` : '',
       note ? `WHAT THEY WANT CHANGED\n${note}` : '',
+    ].filter(Boolean).join('\n\n');
+  } else if (action === 'turn') {
+    const ids = Object.keys(SETTLE);
+    const topicId = ids.includes(String(body.topic)) ? String(body.topic) : 'project';
+    spec = topicId === 'project' ? PROJECT_TOPIC : SECTIONS[topicId];
+    const message = clip(body.message, 1200);
+    if (!message) return fail('Say something first', 400);
+    const items = (value: unknown, max: number) => (Array.isArray(value) ? value : []).slice(-max).map((x) => {
+      const d = (x ?? {}) as Record<string, unknown>;
+      return { topic: ids.includes(String(d.topic)) ? String(d.topic) : 'project', text: clip(d.text, 240) };
+    }).filter((d) => d.text);
+    const locked = items(body.decisions, 80);
+    const open = items(body.open, 30);
+    const history = (Array.isArray(body.history) ? body.history : []).slice(-8).map((x) => {
+      const m = (x ?? {}) as Record<string, unknown>;
+      return `${m.role === 'you' ? 'THEM' : 'YOU'}: ${clip(m.text, 700)}`;
+    });
+    const turns = Math.max(0, Math.min(20, Number(body.turns) || 0));
+    const titleOf = (id: string) => (id === 'project' ? PROJECT_TOPIC.title : SECTIONS[id].title);
+    const topicLines = ids.map((id) => {
+      const n = locked.filter((d) => d.topic === id).length;
+      const parked = open.filter((d) => d.topic === id).length;
+      return `- ${id}: ${titleOf(id)}. Needs: ${SETTLE[id]} [${n} locked${parked ? `, ${parked} parked` : ''}]`;
+    });
+    if (message.includes('?')) {
+      // A question can be about anything in the toolkit, so search on their words alone
+      query = message;
+      spec = undefined;
+    } else {
+      query = [spec.query, message, message, history.slice(-1).join(' ')].join(' ');
+    }
+    excerptLimit = [5, 2400];
+    userText = [
+      `TOPICS, in order\n${topicLines.join('\n')}`,
+      `CURRENT TOPIC: ${topicId} (${titleOf(topicId)}). Exchanges on it so far: ${turns}.`,
+      locked.length ? `LOCKED IN SO FAR\n${locked.map((d) => `- [${d.topic}] ${d.text}`).join('\n')}` : 'LOCKED IN SO FAR\n(nothing yet)',
+      open.length ? `PARKED FOR LATER\n${open.map((d) => `- [${d.topic}] ${d.text}`).join('\n')}` : '',
+      history.length ? `THE CONVERSATION SO FAR (most recent last)\n${history.join('\n')}` : '',
+      `THEIR MESSAGE\n${message}`,
     ].filter(Boolean).join('\n\n');
   } else if (action === 'ask') {
     const question = clip(body.question, 600);
@@ -395,7 +489,7 @@ Deno.serve(async (req) => {
   const key = Deno.env.get('ANTHROPIC_COMMUNITY_KEY') ?? '';
   if (!key) return fail('The AI is not configured on this server', 503);
 
-  const excerpts = search(loadIndex(), query, spec);
+  const excerpts = search(loadIndex(), query, spec, excerptLimit[0], excerptLimit[1]);
 
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -405,11 +499,11 @@ Deno.serve(async (req) => {
       max_tokens: MAX_TOKENS,
       stream: true,
       output_config: { effort: EFFORT },
-      system: SYSTEM,
+      system: action === 'turn' ? TURN_SYSTEM : SYSTEM,
       messages: [
         {
           role: 'user',
-          content: `${userText}\n\nTOOLKIT EXCERPTS\n${excerptBlock(excerpts)}\n\n${action === 'draft' ? DRAFT_SHAPE : ASK_SHAPE}`,
+          content: `${userText}\n\nTOOLKIT EXCERPTS\n${excerptBlock(excerpts)}\n\n${action === 'draft' ? DRAFT_SHAPE : action === 'turn' ? 'Write your reply, then the ===META=== line and the JSON.' : ASK_SHAPE}`,
         },
       ],
     }),
