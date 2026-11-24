@@ -181,7 +181,7 @@ const GUIDE_SYSTEM = `You help a housing developer team find what Shareable's Li
 
 Return only one JSON object, nothing before or after it:
 {"passages":[{"id":"lot-000","quote":"...","why":"..."}],"questions":[{"q":"...","id":"lot-000"}]}
-- passages: 3 to 5, most useful first. quote: one to three consecutive sentences copied character for character from that excerpt. Same words, same order, same punctuation. Nothing added, nothing dropped, no ellipses, no brackets. Where the excerpt has a link written as [words](address), write only the words. Choose quotes that make sense on their own. Do not quote the same sentence twice.
+- passages: 3 or 4, most useful first, since they have a few minutes for this part of the plan. quote: one to three consecutive sentences copied character for character from that excerpt. Same words, same order, same punctuation. Nothing added, nothing dropped, no ellipses, no brackets. Where the excerpt has a link written as [words](address), write only the words. Choose quotes that make sense on their own. Do not quote the same sentence twice.
 - why: at most 18 words on how this passage connects to what they wrote, or to this part of the plan if they wrote little. Speak to them as "you". No advice of your own and no judgement of their answers.
 - questions: up to 4 short questions that the quoted passages raise and that their answers do not settle yet, such as a permit to check, a safety question, or a cost to price. Give the id of the passage each comes from. Never include something they already answered. An empty list is fine.`;
 

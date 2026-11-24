@@ -1,5 +1,5 @@
 {
-  "_readme": "This one file sets what the workbook asks. Change a title, a question or the order here and both the page and the server follow. Each section needs a unique id (letters only). 'toolkit' tells the search where to look: 'search' is extra words to look for, 'sections' are toolkit sections to favour (matched on the start of their name), and 'always' is a chapter that is always included. After editing, run ./deploy.sh so the server picks it up.",
+  "_readme": "This one file sets what the workbook asks. Change a title, a nudge or the order here and both the page and the server follow. Each section needs a unique id (letters only). 'questions' are shown as nudges under one notes box, so keep them short and keep to three or four. 'toolkit' tells the search where to look: 'search' is extra words to look for, 'sections' are toolkit sections to favour (matched on the start of their name), and 'always' is a chapter that is always included. After editing, run ./deploy.sh so the server picks it up.",
   "project": [
     {
       "key": "org",
@@ -12,35 +12,14 @@
       "short": true
     },
     {
-      "key": "building",
-      "label": "The building",
-      "hint": "What kind of housing, how many homes, and who lives there."
-    },
-    {
-      "key": "space",
-      "label": "The space you have in mind",
-      "hint": "A storage room, a community room corner, a closet off the lobby. Rough size if you know it."
-    },
-    {
-      "key": "team",
-      "label": "Who is working on this",
-      "hint": "Staff, resident leaders, partners. Names or roles."
-    },
-    {
-      "key": "budget",
-      "label": "Rough budget",
-      "hint": "What you have or expect for opening and the first year. A range is fine.",
-      "short": true
-    },
-    {
       "key": "opening",
       "label": "When you want to open",
       "short": true
     },
     {
-      "key": "heard",
-      "label": "What residents have told you so far",
-      "hint": "Anything they have asked for or worried about. Leave blank if you have not asked yet."
+      "key": "building",
+      "label": "The building",
+      "hint": "What kind of housing, how many homes, and who lives there. A line or two."
     }
   ],
   "sections": [

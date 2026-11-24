@@ -400,3 +400,17 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   .provenance { background: none; border-left: 2px solid #999; }
   .plan-sub { color: #000; }
 }
+
+/* ---------- Three steps per section ---------- */
+
+.num { flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--navy); color: var(--cream); font: 700 0.95rem/1 var(--sans); }
+.step-head { display: flex; align-items: center; gap: 10px; font-family: var(--serif); font-weight: 500; font-size: 1.4rem; letter-spacing: -0.015em; margin: 0 0 8px; }
+.part.later { opacity: 0.5; }
+.part.later .num { background: transparent; color: var(--navy); border: 1.5px solid var(--navy); }
+.nudges { margin: 4px 0 6px; padding-left: 1.2em; color: var(--soft); font-size: 0.95rem; }
+.nudges li { margin-bottom: 2px; }
+.part-hint.sub { margin-top: 20px; }
+.part-hint strong { color: var(--navy); }
+.three { list-style: none; margin: 26px 0 18px; padding: 0; display: grid; gap: 12px; }
+.three li { display: flex; gap: 12px; align-items: flex-start; }
+.three .num { margin-top: 1px; }
