@@ -1,0 +1,229 @@
+{
+  "_readme": "This one file sets what the workbook asks. Change a title, a question or the order here and both the page and the server follow. Each section needs a unique id (letters only). 'toolkit' tells the search where to look: 'search' is extra words to look for, 'sections' are toolkit sections to favour (matched on the start of their name), and 'always' is a chapter that is always included. After editing, run ./deploy.sh so the server picks it up.",
+  "project": [
+    {
+      "key": "org",
+      "label": "Your organization",
+      "short": true
+    },
+    {
+      "key": "city",
+      "label": "City",
+      "short": true
+    },
+    {
+      "key": "building",
+      "label": "The building",
+      "hint": "What kind of housing, how many homes, and who lives there."
+    },
+    {
+      "key": "space",
+      "label": "The space you have in mind",
+      "hint": "A storage room, a community room corner, a closet off the lobby. Rough size if you know it."
+    },
+    {
+      "key": "team",
+      "label": "Who is working on this",
+      "hint": "Staff, resident leaders, partners. Names or roles."
+    },
+    {
+      "key": "budget",
+      "label": "Rough budget",
+      "hint": "What you have or expect for opening and the first year. A range is fine.",
+      "short": true
+    },
+    {
+      "key": "opening",
+      "label": "When you want to open",
+      "short": true
+    },
+    {
+      "key": "heard",
+      "label": "What residents have told you so far",
+      "hint": "Anything they have asked for or worried about. Leave blank if you have not asked yet."
+    }
+  ],
+  "sections": [
+    {
+      "id": "purpose",
+      "title": "Purpose and people",
+      "brief": "Why this library of things, who it is for, and who will carry it.",
+      "questions": [
+        "Why does this building need a library of things? What would be different for residents a year from now?",
+        "Who is it for? Residents only, or neighbors too?",
+        "Who will carry it day to day, and who else needs to be in the circle so it does not rest on one person?"
+      ],
+      "toolkit": {
+        "search": "why who vision motivation team shared responsibility community challenges guiding questions",
+        "sections": [
+          "Section 1"
+        ],
+        "always": "Apartment building"
+      }
+    },
+    {
+      "id": "residents",
+      "title": "Resident needs and engagement",
+      "brief": "How residents shape what the library holds and how it runs.",
+      "questions": [
+        "How have you asked residents what they would borrow, or how will you?",
+        "Who is hard to reach in the building (language, schedule, trust), and what would help?",
+        "How will residents keep having a say once it is open?"
+      ],
+      "toolkit": {
+        "search": "needs assessment engagement survey community input listening residents outreach",
+        "sections": [
+          "Section 1"
+        ]
+      }
+    },
+    {
+      "id": "space",
+      "title": "Space and setup",
+      "brief": "Where it lives in the building, how it is laid out, and how people get to it.",
+      "questions": [
+        "Describe the space: where it is, how big, who holds the key today.",
+        "When could it be open, and who would be there?",
+        "What needs to change before opening (shelving, power, locks, signs, access for people with mobility needs)?"
+      ],
+      "toolkit": {
+        "search": "space design layout storage shelving access hours apartment building room accessibility",
+        "sections": [
+          "Section 3"
+        ],
+        "always": "Apartment building"
+      }
+    },
+    {
+      "id": "items",
+      "title": "Items: what to stock and how to get them",
+      "brief": "The opening inventory, where items come from, and how they stay in working order.",
+      "questions": [
+        "What are the first 15 to 30 items you expect residents to want?",
+        "Where will items come from: purchase, donations, partners?",
+        "Who checks, cleans and repairs items when they come back?"
+      ],
+      "toolkit": {
+        "search": "sourcing items inventory donations purchasing popular items maintenance repair cleaning",
+        "sections": [
+          "Section 2"
+        ]
+      }
+    },
+    {
+      "id": "policies",
+      "title": "Policies and lending system",
+      "brief": "How borrowing works, and what tracks it.",
+      "questions": [
+        "Who can borrow, for how long, and does it cost anything?",
+        "What should happen when something comes back late, broken, or not at all?",
+        "How will you track loans: lending software, a spreadsheet, a paper ledger? Any constraint from your property management systems?"
+      ],
+      "toolkit": {
+        "search": "policies lending system loan period late fees damaged items waiver software inventory management checkout",
+        "sections": [
+          "Section 2",
+          "Section 5"
+        ]
+      }
+    },
+    {
+      "id": "people",
+      "title": "Staffing, volunteers and resident roles",
+      "brief": "Who opens the door, who looks after items, and how residents take on roles.",
+      "questions": [
+        "How many staff hours per week can you commit, and whose?",
+        "What roles could residents or volunteers hold, and is there a stipend or other thank you?",
+        "How will people be trained and supported?"
+      ],
+      "toolkit": {
+        "search": "volunteers staffing roles shifts training membership recruiting coordinator hiring",
+        "sections": [
+          "Section 6"
+        ]
+      }
+    },
+    {
+      "id": "budget",
+      "title": "Budget and funding",
+      "brief": "What it costs to open and to run for a year, and where the money comes from.",
+      "questions": [
+        "What do you expect to spend before opening, and on what?",
+        "What will it cost to run each year, and which line in your budget does that sit on?",
+        "Which funding sources are realistic: operating budget, resident services funds, grants, sponsors, fees?"
+      ],
+      "toolkit": {
+        "search": "budget operational costs income fundraising grants earned revenue startup costs membership fees",
+        "sections": [
+          "Section 7"
+        ]
+      }
+    },
+    {
+      "id": "risk",
+      "title": "Insurance, risk and governance",
+      "brief": "How risk is handled, what cover is needed, and who decides.",
+      "questions": [
+        "What have your insurer, risk manager or lawyer said so far, if anything?",
+        "Which items or situations worry you most?",
+        "Who makes decisions about the library, and how are residents part of that?"
+      ],
+      "toolkit": {
+        "search": "insurance liability waiver risk governance decision making board community governance safety",
+        "sections": [
+          "Section 5"
+        ]
+      }
+    },
+    {
+      "id": "partners",
+      "title": "Partners",
+      "brief": "Who to work with nearby, and what each side brings.",
+      "questions": [
+        "Who do you already work with that could help (tool libraries, the public library, nonprofits, city agencies, local businesses)?",
+        "What do you most need from a partner: items, expertise, volunteers, money, repair skills?",
+        "What can you offer in return?"
+      ],
+      "toolkit": {
+        "search": "partnerships selecting partners nonprofit government business public library tool library ecosystem",
+        "sections": [
+          "Section 9"
+        ]
+      }
+    },
+    {
+      "id": "launch",
+      "title": "Outreach and launch event",
+      "brief": "How residents hear about it, and what opening day looks like.",
+      "questions": [
+        "How do residents hear about things in the building today, and what works?",
+        "What would a good opening day look like?",
+        "Does it have a name yet? Any workshops or repair events you want to run in the first months?"
+      ],
+      "toolkit": {
+        "search": "communications marketing brand outreach launch event workshops repair events flyers social media",
+        "sections": [
+          "Section 4",
+          "Section 10"
+        ]
+      }
+    },
+    {
+      "id": "timeline",
+      "title": "Timeline to opening day",
+      "brief": "The steps between now and opening, in order, with who does each.",
+      "questions": [
+        "What is already done, and what must happen before anything else can?",
+        "What fixed dates or approvals are you working around?",
+        "Who owns the timeline?"
+      ],
+      "toolkit": {
+        "search": "timeline planning steps phases getting started launch opening first year milestones now what",
+        "sections": [
+          "Section 1",
+          "Conclusion"
+        ]
+      }
+    }
+  ]
+}

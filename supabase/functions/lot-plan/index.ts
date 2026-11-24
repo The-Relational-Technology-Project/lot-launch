@@ -12,6 +12,12 @@
  *   { action: 'draft', section, project, answers: [{q, a}], done?: [{title, text}],
  *     current?, note? }
  *       — draft (or redraft, when `current`/`note` are given) one plan section
+ *   { action: 'guide', section, project, answers } | { action: 'guide', question }
+ *       — what the workbook uses: toolkit passages quoted word for word that
+ *         bear on what the person wrote, each with a one-line note on why, and
+ *         questions those passages raise. Plain JSON. Every quote is checked
+ *         against the toolkit here and dropped if it is not exact. This action
+ *         never writes or rewrites any part of the person's plan.
  *   { action: 'ask', question, project? }
  *       — answer one question from the toolkit
  *   { action: 'turn', topic, message, history, decisions, open, turns }
@@ -46,6 +52,7 @@
  */
 
 import toolkit from './toolkit.json' with { type: 'json' };
+import config from './sections.json' with { type: 'json' };
 
 const MODEL = Deno.env.get('LOT_PLAN_MODEL') ?? Deno.env.get('COMMUNITY_APP_MODEL') ?? 'claude-opus-5-5';
 const EFFORT = Deno.env.get('LOT_PLAN_EFFORT') ?? 'low';
@@ -88,78 +95,28 @@ interface SectionSpec {
   pin?: string;
 }
 
-const APARTMENT = 'Apartment building';
+// Titles, questions and where to look in the toolkit all come from
+// sections.json at the repo root, the one file Shareable edits. deploy.sh
+// copies it beside this file.
+interface SectionConfig {
+  id: string;
+  title: string;
+  brief: string;
+  questions: string[];
+  toolkit?: { search?: string; sections?: string[]; always?: string };
+}
 
-const SECTIONS: Record<string, SectionSpec> = {
-  purpose: {
-    title: 'Purpose and people',
-    brief: 'Why this library of things, who it is for, and who will carry it.',
-    query: 'why who vision motivation team shared responsibility community challenges guiding questions',
-    lift: ['Section 1'],
-    pin: APARTMENT,
-  },
-  residents: {
-    title: 'Resident needs and engagement',
-    brief: 'How residents shape what the library holds and how it runs, before and after opening.',
-    query: 'needs assessment engagement survey community input listening residents outreach',
-    lift: ['Section 1'],
-  },
-  space: {
-    title: 'Space and setup',
-    brief: 'Where it lives in the building, how the room is laid out, and how people get to it.',
-    query: 'space design layout storage shelving access hours apartment building room accessibility',
-    lift: ['Section 3'],
-    pin: APARTMENT,
-  },
-  items: {
-    title: 'Items: what to stock and how to get them',
-    brief: 'The opening inventory, where items come from, and how they are kept in working order.',
-    query: 'sourcing items inventory donations purchasing popular items maintenance repair cleaning',
-    lift: ['Section 2'],
-  },
-  policies: {
-    title: 'Policies and lending system',
-    brief: 'How borrowing works: loan periods, late or broken items, waivers, and the software or ledger that tracks it.',
-    query: 'policies lending system loan period late fees damaged items waiver software inventory management checkout',
-    lift: ['Section 2', 'Section 5'],
-  },
-  people: {
-    title: 'Staffing, volunteers and resident roles',
-    brief: 'Who opens the door, who looks after items, and how residents take on roles.',
-    query: 'volunteers staffing roles shifts training membership recruiting coordinator hiring',
-    lift: ['Section 6'],
-  },
-  budget: {
-    title: 'Budget and funding',
-    brief: 'What it costs to open and to run for a year, and where the money comes from.',
-    query: 'budget operational costs income fundraising grants earned revenue startup costs membership fees',
-    lift: ['Section 7'],
-  },
-  risk: {
-    title: 'Insurance, risk and governance',
-    brief: 'How risk is handled, what cover is needed, and who makes decisions.',
-    query: 'insurance liability waiver risk governance decision making board community governance safety',
-    lift: ['Section 5'],
-  },
-  partners: {
-    title: 'Partners',
-    brief: 'Who to work with nearby, and what each side brings.',
-    query: 'partnerships selecting partners nonprofit government business public library tool library ecosystem',
-    lift: ['Section 9'],
-  },
-  launch: {
-    title: 'Outreach and launch event',
-    brief: 'How residents hear about it, and what opening day looks like.',
-    query: 'communications marketing brand outreach launch event workshops repair events flyers social media',
-    lift: ['Section 4', 'Section 10'],
-  },
-  timeline: {
-    title: 'Timeline to opening day',
-    brief: 'The steps between now and opening, in order, with who does each.',
-    query: 'timeline planning steps phases getting started launch opening first year milestones now what',
-    lift: ['Section 1', 'Conclusion'],
-  },
-};
+const CONFIG = config as { project: { key: string; label: string }[]; sections: SectionConfig[] };
+
+const SECTIONS: Record<string, SectionSpec> = Object.fromEntries(
+  CONFIG.sections.map((c) => [c.id, {
+    title: c.title,
+    brief: c.brief,
+    query: c.toolkit?.search ?? c.title,
+    lift: c.toolkit?.sections ?? [],
+    pin: c.toolkit?.always,
+  }]),
+);
 
 const SYSTEM = `You help a housing developer write the launch plan for a library of things in one of their buildings. They finished Shareable's Library of Things Co-Lab and are opening by the end of spring. You work from Shareable's Library of Things Toolkit 2.0, and only from it.
 
@@ -218,6 +175,28 @@ Then, on a new line, write exactly ===META=== followed by one JSON object and no
 - chips: 2 to 4 likely short answers to the question you just asked, 6 words or fewer each, written as they would say them. Empty if the question needs a free answer, like a name or a description.
 - topic: the id of the topic your question is about, or "done" when every topic is covered.`;
 
+// ---------- The workbook: point at the toolkit, never rewrite the person ----------
+
+const GUIDE_SYSTEM = `You help a housing developer team find what Shareable's Library of Things Toolkit 2.0 says about the part of their launch plan they are working on. You do not write their plan. You never restate, summarize, correct or improve what they wrote. Your only job is to point: choose the passages from the excerpts that bear most directly on what they wrote, quote them exactly, and note questions those passages raise.
+
+Return only one JSON object, nothing before or after it:
+{"passages":[{"id":"lot-000","quote":"...","why":"..."}],"questions":[{"q":"...","id":"lot-000"}]}
+- passages: 3 to 5, most useful first. quote: one to three consecutive sentences copied character for character from that excerpt. Same words, same order, same punctuation. Nothing added, nothing dropped, no ellipses, no brackets. Where the excerpt has a link written as [words](address), write only the words. Choose quotes that make sense on their own. Do not quote the same sentence twice.
+- why: at most 18 words on how this passage connects to what they wrote, or to this part of the plan if they wrote little. Speak to them as "you". No advice of your own and no judgement of their answers.
+- questions: up to 4 short questions that the quoted passages raise and that their answers do not settle yet, such as a permit to check, a safety question, or a cost to price. Give the id of the passage each comes from. Never include something they already answered. An empty list is fine.`;
+
+/** Strips what differs between the toolkit's stored text and a faithful quote of it */
+function plain(text: string): string {
+  return text
+    .replace(/\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, '$1')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\*\*|#{2,4} /g, '')
+    .replace(/(^|\s)- /g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const FLYER_SHAPE = `Write a one-page handout this team can print and put under doors or on the laundry room wall. Its job is to tell residents a library of things is coming and to ask what they would borrow. It is read in a few seconds by someone who was not looking for it.
 
 Return only one JSON object, nothing before or after it:
@@ -250,11 +229,34 @@ function corsFor(req: Request): Record<string, string> {
 const hourly = new Map<string, { count: number; start: number }>();
 let daily = { day: '', count: 0 };
 
+const DAILY_LIMIT = 'This experiment has reached its limit for today. Try again tomorrow.';
+
+/**
+ * The day's count across every copy of this function, kept in the database so
+ * a restart does not reset it. If the database cannot be reached, the
+ * in-memory count above still applies.
+ */
+async function overDailyLimit(): Promise<boolean> {
+  try {
+    const url = Deno.env.get('SUPABASE_URL') ?? '';
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const res = await fetch(`${url}/rest/v1/rpc/lot_usage_bump`, {
+      method: 'POST',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (!res.ok) return false;
+    return Number(await res.json()) > PER_DAY;
+  } catch {
+    return false;
+  }
+}
+
 function overLimit(address: string): string | null {
   const now = Date.now();
   const day = new Date(now).toISOString().slice(0, 10);
   if (daily.day !== day) daily = { day, count: 0 };
-  if (daily.count >= PER_DAY) return 'This prototype has reached its limit for today. Try again tomorrow.';
+  if (daily.count >= PER_DAY) return DAILY_LIMIT;
   const bucket = hourly.get(address);
   if (!bucket || now - bucket.start > 3_600_000) {
     hourly.set(address, { count: 1, start: now });
@@ -376,16 +378,7 @@ function clip(value: unknown, max = MAX_FIELD_CHARS): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
-const PROJECT_LABELS: [string, string][] = [
-  ['org', 'Organization'],
-  ['city', 'City'],
-  ['building', 'The building and who lives there'],
-  ['space', 'Space in mind'],
-  ['team', 'Team'],
-  ['budget', 'Budget'],
-  ['opening', 'Target opening'],
-  ['heard', 'What residents have said so far'],
-];
+const PROJECT_LABELS: [string, string][] = CONFIG.project.map((f) => [f.key, f.label]);
 
 function projectBlock(project: unknown): string {
   const p = (project && typeof project === 'object' ? project : {}) as Record<string, unknown>;
@@ -430,7 +423,7 @@ async function wall(action: string, body: Record<string, unknown>): Promise<unkn
   if (team.length < 2) throw new WallError('Say who is posting first');
   if (text.length < 5) throw new WallError('Write a little more first');
   if (action === 'wall_post') {
-    const topic = Object.keys(SETTLE).includes(String(body.topic)) ? String(body.topic) : null;
+    const topic = ['project', ...Object.keys(SECTIONS)].includes(String(body.topic)) ? String(body.topic) : null;
     const [row] = (await wallDb('', { method: 'POST', body: JSON.stringify({ team, topic, body: text }) })) as WallRow[];
     return { post: { ...row, replies: [] } };
   }
@@ -512,7 +505,7 @@ Deno.serve(async (req) => {
       note ? `WHAT THEY WANT CHANGED\n${note}` : '',
     ].filter(Boolean).join('\n\n');
   } else if (action === 'turn') {
-    const ids = Object.keys(SETTLE);
+    const ids = ['project', ...Object.keys(SECTIONS)];
     const topicId = ids.includes(String(body.topic)) ? String(body.topic) : 'project';
     spec = topicId === 'project' ? PROJECT_TOPIC : SECTIONS[topicId];
     const message = clip(body.message, 1200);
@@ -532,7 +525,7 @@ Deno.serve(async (req) => {
     const topicLines = ids.map((id) => {
       const n = locked.filter((d) => d.topic === id).length;
       const parked = open.filter((d) => d.topic === id).length;
-      return `- ${id}: ${titleOf(id)}. Needs: ${SETTLE[id]} [${n} locked${parked ? `, ${parked} parked` : ''}]`;
+      return `- ${id}: ${titleOf(id)}. Needs: ${SETTLE[id] ?? SECTIONS[id].brief} [${n} locked${parked ? `, ${parked} parked` : ''}]`;
     });
     if (message.includes('?')) {
       // A question can be about anything in the toolkit, so search on their words alone
@@ -550,6 +543,27 @@ Deno.serve(async (req) => {
       history.length ? `THE CONVERSATION SO FAR (most recent last)\n${history.join('\n')}` : '',
       `THEIR MESSAGE\n${message}`,
     ].filter(Boolean).join('\n\n');
+  } else if (action === 'guide') {
+    const question = clip(body.question, 600);
+    if (question) {
+      // The "ask the toolkit" box: their words alone decide where to look
+      query = question;
+      userText = `THEIR PROJECT\n${projectBlock(body.project)}\n\nTHEIR QUESTION ABOUT THE TOOLKIT\n${question}\n\nReturn passages that answer it and an empty questions list. If no excerpt answers it, return an empty passages list.`;
+    } else {
+      spec = SECTIONS[String(body.section ?? '')];
+      if (!spec) return fail('Unknown section', 400);
+      const answers = (Array.isArray(body.answers) ? body.answers : []).slice(0, 8).map((x) => {
+        const pair = (x ?? {}) as Record<string, unknown>;
+        return { q: clip(pair.q, 300), a: clip(pair.a) };
+      });
+      const said = answers.map((x) => x.a).join(' ');
+      query = [spec.query, spec.query, said, said].join(' ');
+      userText = [
+        `THEIR PROJECT\n${projectBlock(body.project)}`,
+        `THE PART OF THE PLAN THEY ARE ON: ${spec.title}\n${spec.brief}`,
+        `WHAT THEY WROTE\n${answers.map((x) => `Q: ${x.q}\nA: ${x.a || '(left blank)'}`).join('\n\n')}`,
+      ].join('\n\n');
+    }
   } else if (action === 'flyer') {
     spec = SECTIONS.residents;
     const texts = (value: unknown, max: number) => (Array.isArray(value) ? value : []).slice(0, max)
@@ -575,11 +589,59 @@ Deno.serve(async (req) => {
   const address = (req.headers.get('x-forwarded-for') ?? 'unknown').split(',')[0].trim();
   const limited = overLimit(address);
   if (limited) return fail(limited, 429);
+  if (await overDailyLimit()) return fail(DAILY_LIMIT, 429);
 
   const key = Deno.env.get('ANTHROPIC_COMMUNITY_KEY') ?? '';
   if (!key) return fail('The AI is not configured on this server', 503);
 
   const excerpts = search(loadIndex(), query, spec, excerptLimit[0], excerptLimit[1]);
+
+  if (action === 'guide') {
+    // Not streamed: every quote is checked against the toolkit before anything is sent back
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        output_config: { effort: EFFORT },
+        system: GUIDE_SYSTEM,
+        messages: [{ role: 'user', content: `${userText}\n\nTOOLKIT EXCERPTS\n${excerptBlock(excerpts)}` }],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error('lot-plan guide upstream error', res.status, JSON.stringify(data).slice(0, 500));
+      return fail(res.status === 429 ? 'The AI is busy right now. Try again in a moment.' : 'The AI is unavailable right now. Try again shortly.', 502);
+    }
+    const text = (Array.isArray(data?.content) ? data.content : [])
+      .filter((b: { type?: string }) => b.type === 'text').map((b: { text?: string }) => b.text ?? '').join('');
+    let parsed: { passages?: unknown; questions?: unknown } = {};
+    try {
+      parsed = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+    } catch {
+      console.error('lot-plan guide unparsable', text.slice(0, 300));
+    }
+    const byId = new Map(excerpts.map((c) => [c.id, c]));
+    const passages: Record<string, string>[] = [];
+    let dropped = 0;
+    for (const raw of Array.isArray(parsed.passages) ? parsed.passages.slice(0, 6) : []) {
+      const p = (raw ?? {}) as Record<string, unknown>;
+      const chunk = byId.get(String(p.id));
+      const quote = plain(String(p.quote ?? ''));
+      // Word for word or not at all
+      if (!chunk || quote.length < 20 || !plain(chunk.text).includes(quote)) { dropped += 1; continue; }
+      if (passages.some((x) => x.quote === quote)) continue;
+      passages.push({ id: chunk.id, quote, why: clip(p.why, 200), heading: chunk.heading, section: chunk.section, chapter: chunk.chapter, url: chunk.url });
+    }
+    if (dropped) console.warn(`lot-plan guide dropped ${dropped} quote(s) that were not word for word`);
+    const kept = new Set(passages.map((x) => x.id));
+    const questions = (Array.isArray(parsed.questions) ? parsed.questions.slice(0, 4) : []).map((raw) => {
+      const q = (raw ?? {}) as Record<string, unknown>;
+      return { q: clip(q.q, 200), id: kept.has(String(q.id)) ? String(q.id) : '' };
+    }).filter((q) => q.q);
+    return new Response(JSON.stringify({ passages, questions }), { headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  }
 
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
