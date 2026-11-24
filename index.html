@@ -168,6 +168,131 @@ async function ask() {
   renderAsk();
 }
 
+/**
+ * The plan as a flat list of blocks, the one shape every export is made from.
+ * Text the person wrote is carried as is: no trimming inside it, no rewording.
+ */
+function planBlocks() {
+  const p = state.project;
+  const out = [{ t: 'title', text: 'Library of Things Launch Plan' }];
+  for (const f of PROJECT_FIELDS) if (String(p[f.key] || '').trim()) out.push({ t: 'label', text: f.label }, { t: 'own', text: p[f.key] });
+  const open = [];
+  for (const s of SECTIONS) {
+    const sec = state.sections[s.id];
+    if (!started(sec)) continue;
+    out.push({ t: 'h1', text: s.title });
+    if (answered(sec)) out.push({ t: 'h2', text: 'Our plan' }, { t: 'own', text: words(sec) });
+    if (kept(sec).length) {
+      out.push({ t: 'h2', text: 'From the toolkit' });
+      for (const k of kept(sec)) out.push({ t: 'quote', text: k.quote, source: k.heading, url: k.url });
+    }
+    if (lines(sec.notes).length) {
+      out.push({ t: 'h2', text: 'Still to figure out' });
+      for (const l of lines(sec.notes)) { out.push({ t: 'li', text: l }); open.push({ t: 'li', text: l, from: s.title }); }
+    }
+  }
+  if (open.length) out.push({ t: 'h1', text: 'Everything still to figure out' }, ...open);
+  out.push({ t: 'small', text: 'Our plan and open questions are exactly as we wrote them. Toolkit passages are quoted word for word from the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0).', source: 'shareable.net/toolkit/library-of-things', url: TOOLKIT });
+  return out;
+}
+
+/** For pasting into Google Docs or Word: real headings, quotes and links */
+function planHtml() {
+  const own = (text) => esc(text).replace(/\n/g, '<br>');
+  return planBlocks().map((b) => {
+    switch (b.t) {
+      case 'title': return `<h1>${esc(b.text)}</h1>`;
+      case 'h1': return `<h2>${esc(b.text)}</h2>`;
+      case 'h2': return `<h3>${esc(b.text)}</h3>`;
+      case 'label': return `<p><b>${esc(b.text)}</b></p>`;
+      case 'own': return `<p>${own(b.text)}</p>`;
+      case 'quote': return `<blockquote><p><i>“${esc(b.text)}”</i></p><p>Source: <a href="${esc(b.url)}">${esc(b.source)}</a></p></blockquote>`;
+      case 'li': return `<ul><li>${esc(b.text)}${b.from ? ` (${esc(b.from)})` : ''}</li></ul>`;
+      default: return `<p><small>${esc(b.text)} <a href="${esc(b.url)}">${esc(b.source)}</a></small></p>`;
+    }
+  }).join('\n').replace(/<\/ul>\n<ul>/g, '');
+}
+
+// ---------- Word file (.docx), written here so nothing is uploaded anywhere ----------
+
+const CRC = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; table[n] = c >>> 0; }
+  return (bytes) => { let c = 0xffffffff; for (const b of bytes) c = table[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+})();
+
+/** A zip archive with the files stored as they are (a .docx is a zip of small XML files) */
+function zip(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const header = (sig, fields) => {
+    const view = new DataView(new ArrayBuffer(4 + fields.reduce((n, f) => n + f[0], 0)));
+    view.setUint32(0, sig, true);
+    let at = 4;
+    for (const [size, value] of fields) { if (size === 2) view.setUint16(at, value, true); else view.setUint32(at, value, true); at += size; }
+    return new Uint8Array(view.buffer);
+  };
+  for (const [name, text] of files) {
+    const nameBytes = enc.encode(name);
+    const data = enc.encode(text);
+    const crc = CRC(data);
+    // version, UTF-8 names, stored, time, date (1 Jan 2026), crc, sizes, name length, extra length
+    const common = [[2, 20], [2, 0x0800], [2, 0], [2, 0], [2, 0x5c21], [4, crc], [4, data.length], [4, data.length], [2, nameBytes.length], [2, 0]];
+    const local = header(0x04034b50, common);
+    parts.push(local, nameBytes, data);
+    central.push(header(0x02014b50, [[2, 20], ...common, [2, 0], [2, 0], [2, 0], [4, 0], [4, offset]]), nameBytes);
+    offset += local.length + nameBytes.length + data.length;
+  }
+  const centralSize = central.reduce((n, b) => n + b.length, 0);
+  const end = header(0x06054b50, [[2, 0], [2, 0], [2, files.length], [2, files.length], [4, centralSize], [4, offset], [2, 0]]);
+  return new Blob([...parts, ...central, end], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+}
+
+function planDocx() {
+  // XML cannot hold control characters; everything else the person typed stays
+  const x = (text) => String(text ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const run = (text, props = '') => `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ''}${String(text).split('\n').map((line, i) => `${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${x(line.replace(/\r$/, ''))}</w:t>`).join('')}</w:r>`;
+  const para = (style, inner) => `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr>${inner}</w:p>`;
+  const links = [];
+  const link = (label, url) => { links.push(url); return `<w:hyperlink r:id="rLink${links.length}">${run(label, '<w:rStyle w:val="Hyperlink"/>')}</w:hyperlink>`; };
+  const body = planBlocks().map((b) => {
+    switch (b.t) {
+      case 'title': return para('Title', run(b.text));
+      case 'h1': return para('Heading1', run(b.text));
+      case 'h2': return para('Heading2', run(b.text));
+      case 'label': return para('Label', run(b.text));
+      case 'own': return para('Normal', run(b.text));
+      case 'quote': return para('Quote', run(`“${b.text}”`)) + para('Source', run('Source: ') + link(b.source, b.url));
+      case 'li': return para('Bullet', run(`•\t${b.text}${b.from ? ` (${b.from})` : ''}`));
+      default: return para('Source', run(`${b.text} `) + link(b.source, b.url));
+    }
+  }).join('');
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const style = (id, name, ppr, rpr, extra = '') => `<w:style w:type="paragraph" w:styleId="${id}"${id === 'Normal' ? ' w:default="1"' : ''}><w:name w:val="${name}"/>${id === 'Normal' ? '' : '<w:basedOn w:val="Normal"/>'}${extra}<w:pPr>${ppr}</w:pPr><w:rPr>${rpr}</w:rPr></w:style>`;
+  const navy = '<w:color w:val="232D58"/>';
+  const styles = `${head}<w:styles ${W}><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`
+    + style('Normal', 'Normal', '', '')
+    + style('Title', 'Title', '<w:spacing w:after="240"/>', `<w:b/>${navy}<w:sz w:val="52"/><w:szCs w:val="52"/>`, '<w:next w:val="Normal"/>')
+    + style('Heading1', 'heading 1', '<w:keepNext/><w:spacing w:before="400" w:after="120"/><w:outlineLvl w:val="0"/>', `<w:b/>${navy}<w:sz w:val="34"/><w:szCs w:val="34"/>`, '<w:next w:val="Normal"/>')
+    + style('Heading2', 'heading 2', '<w:keepNext/><w:spacing w:before="240" w:after="80"/><w:outlineLvl w:val="1"/>', '<w:b/><w:caps/><w:color w:val="3C5347"/><w:sz w:val="20"/><w:szCs w:val="20"/>', '<w:next w:val="Normal"/>')
+    + style('Label', 'Label', '<w:keepNext/><w:spacing w:after="20"/>', '<w:color w:val="55608A"/><w:sz w:val="20"/><w:szCs w:val="20"/>')
+    + style('Quote', 'Quote', '<w:spacing w:after="40"/><w:ind w:left="454" w:right="454"/>', '<w:i/>')
+    + style('Source', 'Source', '<w:ind w:left="454"/>', '<w:color w:val="55608A"/><w:sz w:val="18"/><w:szCs w:val="18"/>')
+    + style('Bullet', 'Bullet', '<w:spacing w:after="80"/><w:tabs><w:tab w:val="left" w:pos="454"/></w:tabs><w:ind w:left="454" w:hanging="284"/>', '')
+    + '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:rPr><w:color w:val="1A4D8F"/><w:u w:val="single"/></w:rPr></w:style></w:styles>';
+  const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  return zip([
+    ['[Content_Types].xml', `${head}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`],
+    ['_rels/.rels', `${head}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/officeDocument" Target="word/document.xml"/></Relationships>`],
+    ['word/document.xml', `${head}<w:document ${W} xmlns:r="${R}"><w:body>${body}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`],
+    ['word/styles.xml', styles],
+    ['word/_rels/document.xml.rels', `${head}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/styles" Target="styles.xml"/>${links.map((url, i) => `<Relationship Id="rLink${i + 1}" Type="${R}/hyperlink" Target="${x(url)}" TargetMode="External"/>`).join('')}</Relationships>`],
+  ]);
+}
+
 /** The plan as plain text. Answers and open questions go in exactly as typed. */
 function planMarkdown() {
   const p = state.project;
@@ -359,8 +484,8 @@ function viewPlan() {
     ${begun.length ? `<p class="provenance">Your plan and open questions are exactly as you wrote them. Toolkit passages are quoted word for word, with links. No part of this plan was written by AI.</p>
     <div class="row no-print">
       <button class="btn" data-act="print">Print or save as PDF</button>
-      <button class="btn dark" data-act="copy">Copy as text</button>
-      <button class="btn dark" data-act="download">Download</button>
+      <button class="btn dark" data-act="word">Download as Word</button>
+      <button class="btn dark" data-act="copy">Copy for Google Docs or Word</button>
     </div>` : `<p class="lede">Nothing here yet. Start with the first section and your plan will collect here.</p>
       <div class="row"><button class="btn" data-go="${SECTIONS[0].id}">Go to the first section</button></div>`}
     ${body}
@@ -484,15 +609,27 @@ document.addEventListener('click', async (e) => {
       if (confirm('Start over? This clears everything you wrote from this browser.')) { state = blank(); live.ask = { open: false, q: '', passages: null, busy: false, error: null }; save(); go('welcome'); }
       break;
     case 'print': window.print(); break;
-    case 'copy':
-      try { await navigator.clipboard.writeText(planMarkdown()); el.textContent = 'Copied'; }
-      catch { el.textContent = 'Copy failed, use Download'; }
-      setTimeout(() => { el.textContent = 'Copy as text'; }, 1800);
+    case 'copy': {
+      // Rich text for a paste that keeps headings, quotes and links; plain text rides along for anything else
+      const label = el.textContent;
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([planHtml()], { type: 'text/html' }),
+          'text/plain': new Blob([planMarkdown()], { type: 'text/plain' }),
+        })]);
+        el.textContent = 'Copied. Now paste into your doc';
+      } catch {
+        try { await navigator.clipboard.writeText(planMarkdown()); el.textContent = 'Copied as plain text'; }
+        catch { el.textContent = 'Copy did not work. Try Download as Word'; }
+      }
+      setTimeout(() => { el.textContent = label; }, 2600);
       break;
-    case 'download': {
-      const url = URL.createObjectURL(new Blob([planMarkdown()], { type: 'text/markdown' }));
-      const a = Object.assign(document.createElement('a'), { href: url, download: 'library-of-things-launch-plan.md' });
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }
+    case 'word': {
+      const url = URL.createObjectURL(planDocx());
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'library-of-things-launch-plan.docx' });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       break;
     }
     case 'ask-open': live.ask.open = true; live.navOpen = false; renderSide(); renderAsk(); document.getElementById('ask-q').focus(); break;

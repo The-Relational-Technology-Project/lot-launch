@@ -31,6 +31,11 @@ The final plan is the person's step 3 words, the passages they kept and their
 open questions, section by section. No sentence in it is
 written by AI. Every page carries an "experiment" label.
 
+The plan can be saved as a PDF (through the browser's print dialog), downloaded
+as a Word file, or copied with its headings, quotes and links for pasting into
+Google Docs or Word. The Word file is built in the browser, so the plan is not
+uploaded anywhere to make it.
+
 ## Changing the questions
 
 `sections.json` is the one file that sets what the workbook asks: the project
