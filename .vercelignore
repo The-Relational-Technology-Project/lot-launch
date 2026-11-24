@@ -1,4 +1,5 @@
 supabase
 build-toolkit.py
+deploy.sh
 README.md
 LICENSE

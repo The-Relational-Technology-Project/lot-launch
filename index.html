@@ -21,209 +21,90 @@
 <div id="ask"></div>
 
 <script>
-// The server half lives in supabase/functions/lot-plan. It owns the toolkit
-// search and the prompts; this page only sends answers.
+// The workbook. People write their own plan; the server (supabase/functions/
+// lot-plan, action "guide") only finds toolkit passages that bear on what they
+// wrote and quotes them word for word. Nothing here rewrites a person's words.
 const API = 'https://texakzqqenzpxawktbgx.supabase.co/functions/v1/lot-plan';
 const TOOLKIT = 'https://www.shareable.net/toolkit/library-of-things/';
 // Served from Shareable's own site, resized by their image CDN
 const COVER = 'https://i0.wp.com/www.shareable.net/wp-content/uploads/2026/03/LoT-2-Digital-Toolkit-Cover-2-scaled.png?w=1200&quality=80&ssl=1';
-const STORE = 'lot-launch-plan-v1';
+const STORE = 'lot-launch-plan-v2';
+const OLD_STORE = 'lot-launch-plan-v1';
 
-const PROJECT_FIELDS = [
-  { key: 'org', label: 'Your organization', short: true },
-  { key: 'city', label: 'City', short: true },
-  { key: 'building', label: 'The building', hint: 'What kind of housing, how many homes, and who lives there.' },
-  { key: 'space', label: 'The space you have in mind', hint: 'A storage room, a community room corner, a closet off the lobby. Rough size if you know it.' },
-  { key: 'team', label: 'Who is working on this', hint: 'Staff, resident leaders, partners. Names or roles.' },
-  { key: 'budget', label: 'Rough budget', hint: 'What you have or expect for opening and the first year. A range is fine.', short: true },
-  { key: 'opening', label: 'When you want to open', short: true },
-  { key: 'heard', label: 'What residents have told you so far', hint: 'Anything they have asked for or worried about. Leave blank if you have not asked yet.' },
-];
-
-const SECTIONS = [
-  { id: 'purpose', title: 'Purpose and people', brief: 'Why this library of things, who it is for, and who will carry it.', questions: [
-    'Why does this building need a library of things? What would be different for residents a year from now?',
-    'Who is it for? Residents only, or neighbors too?',
-    'Who will carry it day to day, and who else needs to be in the circle so it does not rest on one person?' ] },
-  { id: 'residents', title: 'Resident needs and engagement', brief: 'How residents shape what the library holds and how it runs.', questions: [
-    'How have you asked residents what they would borrow, or how will you?',
-    'Who is hard to reach in the building (language, schedule, trust), and what would help?',
-    'How will residents keep having a say once it is open?' ] },
-  { id: 'space', title: 'Space and setup', brief: 'Where it lives in the building, how it is laid out, and how people get to it.', questions: [
-    'Describe the space: where it is, how big, who holds the key today.',
-    'When could it be open, and who would be there?',
-    'What needs to change before opening (shelving, power, locks, signs, access for people with mobility needs)?' ] },
-  { id: 'items', title: 'Items: what to stock and how to get them', brief: 'The opening inventory, where items come from, and how they stay in working order.', questions: [
-    'What are the first 15 to 30 items you expect residents to want?',
-    'Where will items come from: purchase, donations, partners?',
-    'Who checks, cleans and repairs items when they come back?' ] },
-  { id: 'policies', title: 'Policies and lending system', brief: 'How borrowing works, and what tracks it.', questions: [
-    'Who can borrow, for how long, and does it cost anything?',
-    'What should happen when something comes back late, broken, or not at all?',
-    'How will you track loans: lending software, a spreadsheet, a paper ledger? Any constraint from your property management systems?' ] },
-  { id: 'people', title: 'Staffing, volunteers and resident roles', brief: 'Who opens the door, who looks after items, and how residents take on roles.', questions: [
-    'How many staff hours per week can you commit, and whose?',
-    'What roles could residents or volunteers hold, and is there a stipend or other thank you?',
-    'How will people be trained and supported?' ] },
-  { id: 'budget', title: 'Budget and funding', brief: 'What it costs to open and to run for a year, and where the money comes from.', questions: [
-    'What do you expect to spend before opening, and on what?',
-    'What will it cost to run each year, and which line in your budget does that sit on?',
-    'Which funding sources are realistic: operating budget, resident services funds, grants, sponsors, fees?' ] },
-  { id: 'risk', title: 'Insurance, risk and governance', brief: 'How risk is handled, what cover is needed, and who decides.', questions: [
-    'What have your insurer, risk manager or lawyer said so far, if anything?',
-    'Which items or situations worry you most?',
-    'Who makes decisions about the library, and how are residents part of that?' ] },
-  { id: 'partners', title: 'Partners', brief: 'Who to work with nearby, and what each side brings.', questions: [
-    'Who do you already work with that could help (tool libraries, the public library, nonprofits, city agencies, local businesses)?',
-    'What do you most need from a partner: items, expertise, volunteers, money, repair skills?',
-    'What can you offer in return?' ] },
-  { id: 'launch', title: 'Outreach and launch event', brief: 'How residents hear about it, and what opening day looks like.', questions: [
-    'How do residents hear about things in the building today, and what works?',
-    'What would a good opening day look like?',
-    'Does it have a name yet? Any workshops or repair events you want to run in the first months?' ] },
-  { id: 'timeline', title: 'Timeline to opening day', brief: 'The steps between now and opening, in order, with who does each.', questions: [
-    'What is already done, and what must happen before anything else can?',
-    'What fixed dates or approvals are you working around?',
-    'Who owns the timeline?' ] },
-];
+// Filled from sections.json, the one file that sets what the workbook asks
+let PROJECT_FIELDS = [];
+let SECTIONS = [];
 
 // ---------- State ----------
 
-function blank() {
-  const sections = {};
-  for (const s of SECTIONS) sections[s.id] = { answers: s.questions.map(() => ''), draft: '', done: false };
-  return { view: 'welcome', project: {}, sections, sources: {} };
+function blankSection(spec) {
+  return { answers: spec.questions.map(() => ''), passages: [], suggestions: [], notes: '', looked: false, done: false };
 }
 
-let state = blank();
-try {
-  const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
-  if (saved && saved.sections) {
-    state = { ...blank(), ...saved };
-    for (const s of SECTIONS) state.sections[s.id] = { ...blank().sections[s.id], ...(saved.sections[s.id] || {}) };
-  }
-} catch { /* a fresh start is fine */ }
+function blank() {
+  const sections = {};
+  for (const s of SECTIONS) sections[s.id] = blankSection(s);
+  return { view: 'welcome', project: {}, sections };
+}
+
+let state;
+
+function load() {
+  state = blank();
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (saved && saved.sections) {
+      state = { ...state, ...saved, sections: state.sections };
+      for (const s of SECTIONS) if (saved.sections[s.id]) state.sections[s.id] = { ...blankSection(s), ...saved.sections[s.id] };
+      return;
+    }
+    // Carry what people typed in the first version; its AI-written drafts are left behind
+    const old = JSON.parse(localStorage.getItem(OLD_STORE) || 'null');
+    if (old && old.sections) {
+      state.project = old.project || {};
+      for (const s of SECTIONS) if (old.sections[s.id] && Array.isArray(old.sections[s.id].answers)) state.sections[s.id].answers = s.questions.map((_, i) => old.sections[s.id].answers[i] || '');
+    }
+  } catch { /* a fresh start is fine */ }
+}
 
 function save() {
   try { localStorage.setItem(STORE, JSON.stringify(state)); } catch { /* private mode: keep working in memory */ }
 }
 
 // Not saved: what is happening right now
-const live = { busy: null, error: null, editing: null, redraft: null, navOpen: false, ask: { open: false, q: '', a: '', busy: false, error: null } };
+const live = { busy: null, error: null, navOpen: false, ask: { open: false, q: '', passages: null, busy: false, error: null } };
 
 // ---------- Small helpers ----------
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sectionById = (id) => SECTIONS.find((s) => s.id === id);
-const STILL = /^#{2,4}\s*still to figure out\s*$/im;
+const lines = (text) => String(text || '').split('\n').filter((l) => l.trim());
+const answered = (sec) => sec.answers.some((a) => String(a || '').trim());
+const kept = (sec) => sec.passages.filter((p) => p.keep);
+const started = (sec) => answered(sec) || kept(sec).length > 0 || lines(sec.notes).length > 0;
 
-function splitDraft(md) {
-  const m = STILL.exec(md);
-  if (!m) return { body: md.trim(), open: [] };
-  const open = md.slice(m.index + m[0].length).split('\n').map((l) => l.replace(/^\s*[-*]\s+/, '').trim()).filter(Boolean);
-  return { body: md.slice(0, m.index).trim(), open };
-}
-
-/** Markdown to HTML for the small subset the drafts use. Returns the cited ids in order. */
-function renderMd(md) {
-  const cited = [];
-  const inline = (text) => esc(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*([^*\s][^*]*?)\*/g, '$1<em>$2</em>')
-    .replace(/\[((?:lot-\d+)(?:\s*,\s*lot-\d+)*)\]/g, (_, ids) => ids.split(/\s*,\s*/).map((id) => {
-      const src = state.sources[id];
-      if (!src) return '';
-      if (!cited.includes(id)) cited.push(id);
-      return `<a class="cite" href="${esc(src.url)}" target="_blank" rel="noopener" title="${esc(src.heading)}">${cited.indexOf(id) + 1}</a>`;
-    }).join(''));
-  const out = [];
-  let list = null;
-  let para = [];
-  const flush = () => {
-    if (para.length) { out.push(`<p>${inline(para.join(' '))}</p>`); para = []; }
-    if (list) { out.push(`</${list}>`); list = null; }
-  };
-  for (const raw of md.split('\n')) {
-    const line = raw.trimEnd();
-    let m;
-    if (!line.trim()) { flush(); }
-    else if ((m = /^#{1,4}\s+(.*)$/.exec(line))) { flush(); out.push(`<h3>${inline(m[1])}</h3>`); }
-    else if ((m = /^\s*[-*]\s+(.*)$/.exec(line))) {
-      if (list !== 'ul') { flush(); out.push('<ul>'); list = 'ul'; }
-      out.push(`<li>${inline(m[1])}</li>`);
-    } else if ((m = /^\s*\d+[.)]\s+(.*)$/.exec(line))) {
-      if (list !== 'ol') { flush(); out.push('<ol>'); list = 'ol'; }
-      out.push(`<li>${inline(m[1])}</li>`);
-    } else {
-      if (list) flush();
-      para.push(line.trim());
-    }
-  }
-  flush();
-  return { html: out.join('\n'), cited };
-}
-
-function sourcesHtml(cited) {
-  if (!cited.length) return '';
-  const items = cited.map((id) => {
-    const s = state.sources[id];
-    const where = [s.section, s.chapter && s.chapter !== s.heading ? s.chapter : ''].filter(Boolean).join(', ');
-    return `<li><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.heading)}</a> <span>${esc(where)}</span></li>`;
-  }).join('');
-  return `<div class="sources"><div class="tag">From the toolkit</div><ol>${items}</ol></div>`;
-}
-
-/** Calls the server and feeds text to onText as it arrives. */
-async function stream(body, onText) {
+async function call(body) {
   let res;
   try {
     res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } catch {
     throw new Error('Could not reach the server. Check your connection and try again. Your answers are saved.');
   }
-  if (!res.ok || !res.body) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Something went wrong. Try again.');
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let text = '';
-  let finished = false;
-  const handle = (line) => {
-    if (!line.trim()) return;
-    const event = JSON.parse(line);
-    if (event.type === 'sources') {
-      for (const s of event.sources) state.sources[s.id] = s;
-    } else if (event.type === 'delta') {
-      text += event.text;
-      onText(text);
-    } else if (event.type === 'error') {
-      throw new Error(event.error);
-    } else if (event.type === 'done') {
-      finished = true;
-    }
-  };
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let nl;
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      handle(buffer.slice(0, nl));
-      buffer = buffer.slice(nl + 1);
-    }
-  }
-  handle(buffer);
-  if (!finished || !text.trim()) throw new Error('The draft stopped part way. Try again.');
-  return text;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Something went wrong. Try again.');
+  return data;
+}
+
+function sourceLine(p) {
+  const where = [p.section, p.chapter && p.chapter !== p.heading ? p.chapter : ''].filter(Boolean).join(', ');
+  return `<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.heading)}</a> <span>${esc(where)}</span>`;
 }
 
 // ---------- Actions ----------
 
 function go(view) {
   state.view = view;
-  live.error = null; live.editing = null; live.redraft = null; live.navOpen = false;
+  live.error = null; live.navOpen = false;
   save();
   render();
   window.scrollTo(0, 0);
@@ -235,31 +116,22 @@ function nextAfter(id) {
   return i + 1 < SECTIONS.length ? SECTIONS[i + 1].id : 'plan';
 }
 
-async function draft(id, note) {
+async function look(id) {
   if (live.busy) return;
   const spec = sectionById(id);
   const sec = state.sections[id];
-  const done = SECTIONS.filter((s) => s.id !== id && state.sections[s.id].draft)
-    .map((s) => ({ title: s.title, text: splitDraft(state.sections[s.id].draft).body.replace(/\[lot-\d+\]/g, '').slice(0, 320) }));
-  const previous = sec.draft;
-  live.busy = id; live.error = null; live.editing = null; live.redraft = null;
-  sec.draft = '';
+  live.busy = id; live.error = null;
   render();
-  document.getElementById('draft-card')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  document.getElementById('toolkit-part')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   try {
-    const text = await stream({
-      action: 'draft', section: id, project: state.project,
-      answers: spec.questions.map((q, i) => ({ q, a: sec.answers[i] })),
-      done, current: note ? previous : undefined, note: note || undefined,
-    }, (t) => {
-      sec.draft = t;
-      const el = document.getElementById('draft-body');
-      if (el) el.innerHTML = renderMd(t).html;
-    });
-    sec.draft = text.trim();
-    sec.done = false;
+    const data = await call({ action: 'guide', section: id, project: state.project, answers: spec.questions.map((q, i) => ({ q, a: sec.answers[i] })) });
+    // A passage the person already unticked stays unticked if it comes back
+    const dropped = new Set(sec.passages.filter((p) => !p.keep).map((p) => p.quote));
+    sec.passages = (data.passages || []).map((p) => ({ ...p, keep: !dropped.has(p.quote) }));
+    const added = new Set(sec.suggestions.filter((q) => q.added).map((q) => q.q));
+    sec.suggestions = (data.questions || []).map((q) => ({ ...q, added: added.has(q.q) }));
+    sec.looked = true;
   } catch (err) {
-    sec.draft = previous;
     live.error = err.message;
   }
   live.busy = null;
@@ -270,94 +142,94 @@ async function draft(id, note) {
 async function ask() {
   const a = live.ask;
   if (a.busy || a.q.trim().length < 3) return;
-  a.busy = true; a.error = null; a.a = '';
+  a.busy = true; a.error = null; a.passages = null;
   renderAsk();
   try {
-    a.a = await stream({ action: 'ask', question: a.q, project: state.project }, (t) => {
-      a.a = t;
-      const el = document.getElementById('ask-answer');
-      if (el) el.innerHTML = renderMd(t).html;
-    });
+    a.passages = (await call({ action: 'guide', question: a.q, project: state.project })).passages || [];
   } catch (err) {
     a.error = err.message;
   }
   a.busy = false;
-  save();
   renderAsk();
 }
 
+/** The plan as plain text. Answers and open questions go in exactly as typed. */
 function planMarkdown() {
   const p = state.project;
-  const lines = [`# Library of Things Launch Plan`, ''];
-  if (p.org || p.city) lines.push(`**${[p.org, p.city].filter(Boolean).join(', ')}**`, '');
-  for (const f of PROJECT_FIELDS) if (p[f.key] && f.key !== 'org' && f.key !== 'city') lines.push(`- ${f.label}: ${p[f.key]}`);
-  lines.push('');
-  const cited = [];
+  const out = ['# Library of Things Launch Plan', ''];
+  for (const f of PROJECT_FIELDS) if (String(p[f.key] || '').trim()) out.push(`**${f.label}**`, '', p[f.key], '');
   const open = [];
   for (const s of SECTIONS) {
     const sec = state.sections[s.id];
-    if (!sec.draft) continue;
-    const parts = splitDraft(sec.draft);
-    lines.push(`## ${s.title}`, '', parts.body, '');
-    for (const o of parts.open) open.push(`${o.replace(/\s*\[lot-[\d,\slot-]*\]/g, '')} (${s.title})`);
-    for (const m of sec.draft.matchAll(/lot-\d+/g)) if (state.sources[m[0]] && !cited.includes(m[0])) cited.push(m[0]);
+    if (!started(sec)) continue;
+    out.push(`## ${s.title}`, '');
+    if (answered(sec)) {
+      out.push('### Our answers', '');
+      s.questions.forEach((q, i) => { if (String(sec.answers[i] || '').trim()) out.push(`**${q}**`, '', sec.answers[i], ''); });
+    }
+    if (kept(sec).length) {
+      out.push('### From the toolkit', '');
+      for (const k of kept(sec)) out.push(`> ${k.quote}`, '', `Source: ${k.heading}, ${k.url}`, '');
+    }
+    if (lines(sec.notes).length) {
+      out.push('### Still to figure out', '', ...lines(sec.notes).map((l) => `- ${l}`), '');
+      for (const l of lines(sec.notes)) open.push(`${l} (${s.title})`);
+    }
   }
-  if (open.length) lines.push('## Still to figure out', '', ...open.map((o) => `- ${o}`), '');
-  if (cited.length) {
-    lines.push('## From the toolkit', '');
-    for (const id of cited) lines.push(`- [${id}] ${state.sources[id].heading}: ${state.sources[id].url}`);
-    lines.push('');
-  }
-  lines.push(`Drafted with the Library of Things Launch Plan prototype, built on the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0): ${TOOLKIT}`);
-  return lines.join('\n');
+  if (open.length) out.push('## Everything still to figure out', '', ...open.map((l) => `- ${l}`), '');
+  out.push(`Answers and open questions are exactly as we wrote them. Toolkit passages are quoted word for word from the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0): ${TOOLKIT}`);
+  return out.join('\n');
 }
 
 // ---------- Views ----------
 
 function footer() {
   return `<footer>
-    Built on the <a href="${TOOLKIT}" target="_blank" rel="noopener">Library of Things Toolkit 2.0</a> by Shareable (CC BY-NC-ND 4.0).
-    A prototype by the Relational Tech Project. Drafts are a starting point: check anything about insurance, legal or money with your own advisors.
-    <span class="no-print">Your answers stay in this browser. They are sent to an AI model only to write each draft.</span>
-    <span class="no-print">Rather talk it through? <a href="chat">Try the conversation version</a>. See what other teams are asking on the <a href="wall">cohort wall</a>.</span>
+    An experiment by the Relational Tech Project, built on the <a href="${TOOLKIT}" target="_blank" rel="noopener">Library of Things Toolkit 2.0</a> by Shareable (CC BY-NC-ND 4.0). It is not the toolkit itself.
+    Check anything about insurance, legal or money with your own advisors.
+    <span class="no-print">What you write stays in this browser. It is sent to an AI model only to find toolkit passages that fit. The AI never writes or changes your plan.</span>
   </footer>`;
 }
 
+function aiCard() {
+  return `<div class="card how">
+    <div class="prose">
+      <h3>How AI is used here, and how it is not</h3>
+      <ul>
+        <li><strong>You write the plan.</strong> Your answers and your open questions go into the final plan exactly as you typed them.</li>
+        <li><strong>The toolkit speaks for itself.</strong> Passages are quoted word for word from Shareable's toolkit, with a link to the page they came from.</li>
+        <li><strong>AI only points.</strong> It reads what you wrote to pick which toolkit passages to show, adds a one-line note on why, and suggests questions you might add. Each of those is labelled.</li>
+      </ul>
+    </div>
+  </div>`;
+}
+
 function viewWelcome() {
-  const started = Object.keys(state.project).length || SECTIONS.some((s) => state.sections[s.id].draft);
+  const begun = Object.values(state.project).some((v) => String(v || '').trim()) || SECTIONS.some((s) => started(state.sections[s.id]));
   return `<div class="col">
     <div class="hero">
       <div class="hero-text">
         <div class="pill">For Co-Lab teams</div>
         <h1>Write your launch plan, one section at a time</h1>
-        <p class="lede">You bring what you know about your building and your residents. This workbook drafts each part of your plan from Shareable's Library of Things Toolkit, and shows you where every idea came from.</p>
+        <p class="lede">You write what you know about your building and your residents. The workbook shows you what Shareable's Library of Things Toolkit says about it, word for word.</p>
         <div class="row">
-          <button class="btn" data-go="project">${started ? 'Pick up where you left off' : 'Start with your project'}</button>
+          <button class="btn" data-go="project">${begun ? 'Pick up where you left off' : 'Start with your project'}</button>
         </div>
       </div>
       <a class="hero-art" href="${TOOLKIT}" target="_blank" rel="noopener" aria-label="The Library of Things Toolkit, second edition, by Shareable">
         <img src="${COVER}" alt="Cover of The Library of Things Toolkit, second edition, by Shareable" width="1200" height="799" onerror="this.parentNode.remove()">
       </a>
     </div>
-    <div class="card how">
-      <div class="prose">
-        <h3>How it works</h3>
-        <ol>
-          <li>Tell it about your project. Two minutes.</li>
-          <li>Work through ${SECTIONS.length} sections. Answer what you can, skip what you cannot. Edit every draft.</li>
-          <li>Leave with a plan you can print, and a list of what is still to figure out for your next 1:1.</li>
-        </ol>
-        <p>Plan on 30 to 45 minutes. You can stop and come back: your work is saved in this browser.</p>
-      </div>
-    </div>
-    ${started ? '<div class="row"><button class="btn quiet" data-act="reset">Start over</button></div>' : ''}
+    ${aiCard()}
+    <p class="lede">Plan on 30 to 45 minutes for ${SECTIONS.length} sections. Skip what you cannot answer yet. Your work is saved in this browser, so you can stop and come back.</p>
+    ${begun ? '<div class="row"><button class="btn quiet" data-act="reset">Start over</button></div>' : ''}
     ${footer()}
   </div>`;
 }
 
 function viewProject() {
   const field = (f) => `<div class="field">
-      <label for="p-${f.key}">${f.label}${f.hint ? `<span class="hint">${f.hint}</span>` : ''}</label>
+      <label for="p-${f.key}">${esc(f.label)}${f.hint ? `<span class="hint">${esc(f.hint)}</span>` : ''}</label>
       ${f.short
         ? `<input type="text" id="p-${f.key}" data-project="${f.key}" value="${esc(state.project[f.key])}">`
         : `<textarea id="p-${f.key}" data-project="${f.key}">${esc(state.project[f.key])}</textarea>`}
@@ -367,13 +239,22 @@ function viewProject() {
   return `<div class="col">
     <div class="pill">Step 1</div>
     <h2>About your project</h2>
-    <p class="lede">Every draft is written for this building. Rough answers are fine, and you can change them later.</p>
+    <p class="lede">This goes at the top of your plan exactly as you write it, and helps find toolkit passages that fit your building. Rough notes are fine.</p>
     <div class="two">${short.map(field).join('')}</div>
     ${long.map(field).join('')}
     <div class="row">
       <button class="btn" data-go="${SECTIONS[0].id}">Start the plan</button>
     </div>
     ${footer()}
+  </div>`;
+}
+
+function passageHtml(p, i, withKeep) {
+  return `<div class="passage${withKeep && !p.keep ? ' off' : ''}">
+    <blockquote>${esc(p.quote)}</blockquote>
+    <div class="source">${sourceLine(p)}</div>
+    ${p.why ? `<p class="ai-note"><span class="ai-tag">AI note</span> ${esc(p.why)}</p>` : ''}
+    ${withKeep ? `<label class="keep"><input type="checkbox" data-keep="${i}" ${p.keep ? 'checked' : ''}> Keep in my plan</label>` : ''}
   </div>`;
 }
 
@@ -386,74 +267,86 @@ function viewSection(spec) {
       <textarea id="q-${i}" data-answer="${i}">${esc(sec.answers[i])}</textarea>
     </div>`).join('');
 
-  let draftCard = '';
-  if (busy || sec.draft) {
-    const parts = renderMd(sec.draft);
-    const editing = live.editing === spec.id;
-    draftCard = `<div class="card" id="draft-card">
-      <div class="card-head">
-        <span class="banner">Your draft</span>
-        ${busy ? '<span class="writing"><span class="pulse"></span>Reading the toolkit and writing</span>' : ''}
-      </div>
-      ${editing
-        ? `<textarea class="edit-area" id="edit-area" aria-label="Edit your draft">${esc(sec.draft)}</textarea>
-           <div class="row"><button class="btn small" data-act="save-edit">Save changes</button><button class="btn quiet small" data-act="cancel-edit">Cancel</button></div>`
-        : `<div class="prose" id="draft-body">${parts.html}</div>${busy ? '' : sourcesHtml(parts.cited)}`}
-      ${!busy && !editing ? (live.redraft === spec.id
-        ? `<div class="field"><label for="note">What should change?</label><textarea id="note" placeholder="For example: shorter, or we decided on no late fees."></textarea></div>
-           <div class="row"><button class="btn small" data-act="redraft-go">Redraft</button><button class="btn quiet small" data-act="redraft-cancel">Cancel</button></div>`
-        : `<div class="row no-print">
-             <button class="btn" data-act="accept">Looks good, next</button>
-             <button class="btn ghost" data-act="edit">Edit</button>
-             <button class="btn quiet" data-act="redraft">Redraft</button>
-           </div>`) : ''}
-    </div>`;
-  }
+  let toolkit;
+  if (busy) toolkit = `<div class="writing"><span class="pulse"></span>Looking through the toolkit for passages that fit what you wrote</div>`;
+  else if (!sec.looked) toolkit = `<p class="part-hint">See what the toolkit says about what you wrote. Passages are quoted word for word.</p>
+      <div class="row"><button class="btn" data-act="look">Show me what the toolkit says</button></div>`;
+  else if (!sec.passages.length) toolkit = `<p class="part-hint">Nothing in the toolkit matched closely. Try adding a little more above, then look again.</p>
+      <div class="row"><button class="btn dark small" data-act="look">Look again</button></div>`;
+  else toolkit = `<p class="part-hint">Word for word from Shareable's toolkit, picked for what you wrote. Untick any you do not want in your plan.</p>
+      ${sec.passages.map((p, i) => passageHtml(p, i, true)).join('')}
+      <div class="row"><button class="btn quiet small" data-act="look">Changed your answers? Look again</button></div>`;
+
+  const suggestions = sec.suggestions.length ? `<div class="suggest">
+      <div class="tag"><span class="ai-tag">AI suggestion</span> Questions the toolkit passages raise. Tap one to add it to your list.</div>
+      ${sec.suggestions.map((q, i) => `<button class="chip${q.added ? ' added' : ''}" data-suggest="${i}" ${q.added ? 'disabled' : ''}>${q.added ? '✓' : '+'} ${esc(q.q)}</button>`).join('')}
+    </div>` : '';
 
   return `<div class="col">
     <div class="pill">Section ${n} of ${SECTIONS.length}</div>
     <h2>${esc(spec.title)}</h2>
     <p class="lede">${esc(spec.brief)}</p>
-    ${questions}
-    ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
+
+    <section class="part">
+      <h3 class="part-head"><span class="banner">You write</span></h3>
+      <p class="part-hint">Your words go into the plan exactly as you type them.</p>
+      ${questions}
+    </section>
+
+    <section class="part" id="toolkit-part">
+      <h3 class="part-head"><span class="banner">From the toolkit</span></h3>
+      ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
+      ${toolkit}
+    </section>
+
+    <section class="part">
+      <h3 class="part-head"><span class="banner">Still to figure out</span></h3>
+      <label class="part-hint" for="notes">Your own list, one per line. Nothing lands here unless you put it here.</label>
+      <textarea id="notes" data-notes class="notes" placeholder="For example: do we need a permit for the container?">${esc(sec.notes)}</textarea>
+      ${suggestions}
+    </section>
+
     <div class="row">
-      ${sec.draft || busy ? '' : `<button class="btn" data-act="draft">Draft this section</button>
-      <button class="btn quiet" data-go="${nextAfter(spec.id)}">Skip for now</button>`}
+      <button class="btn" data-act="accept">Looks good, next</button>
+      ${started(sec) ? '' : `<button class="btn quiet" data-go="${nextAfter(spec.id)}">Skip for now</button>`}
     </div>
-    ${draftCard}
     ${footer()}
   </div>`;
 }
 
 function viewPlan() {
   const p = state.project;
-  const drafted = SECTIONS.filter((s) => state.sections[s.id].draft);
+  const begun = SECTIONS.filter((s) => started(state.sections[s.id]));
+  const missing = SECTIONS.filter((s) => !started(state.sections[s.id]));
   const open = [];
-  const body = SECTIONS.map((s) => {
+  const body = begun.map((s) => {
     const sec = state.sections[s.id];
-    if (!sec.draft) return `<section class="plan-section no-print"><h2>${esc(s.title)}</h2><p class="empty">Not drafted yet. <a href="#" data-go="${s.id}">Work on this section</a></p></section>`;
-    const parts = splitDraft(sec.draft);
-    for (const o of parts.open) open.push({ text: o.replace(/\s*\[lot-[\d,\slot-]*\]/g, ''), from: s.title });
-    const r = renderMd(parts.body);
-    return `<section class="plan-section"><h2>${esc(s.title)}</h2><div class="prose">${r.html}</div>${sourcesHtml(r.cited)}</section>`;
+    for (const l of lines(sec.notes)) open.push({ text: l, from: s.title });
+    return `<section class="plan-section">
+      <h2>${esc(s.title)}</h2>
+      ${answered(sec) ? `<h3 class="plan-sub">Our answers</h3>${s.questions.map((q, i) => String(sec.answers[i] || '').trim() ? `<div class="qa"><p class="q">${esc(q)}</p><p class="verbatim">${esc(sec.answers[i])}</p></div>` : '').join('')}` : ''}
+      ${kept(sec).length ? `<h3 class="plan-sub">From the toolkit</h3>${kept(sec).map((k) => `<div class="passage"><blockquote>${esc(k.quote)}</blockquote><div class="source">${sourceLine(k)}</div></div>`).join('')}` : ''}
+      ${lines(sec.notes).length ? `<h3 class="plan-sub">Still to figure out</h3><ul class="verbatim-list">${lines(sec.notes).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
+    </section>`;
   }).join('');
-  const facts = PROJECT_FIELDS.filter((f) => p[f.key] && f.key !== 'org' && f.key !== 'city')
-    .map((f) => `<dt>${f.label}</dt><dd>${esc(p[f.key])}</dd>`).join('');
+  const facts = PROJECT_FIELDS.filter((f) => String(p[f.key] || '').trim())
+    .map((f) => `<dt>${esc(f.label)}</dt><dd class="verbatim">${esc(p[f.key])}</dd>`).join('');
   return `<div class="col">
-    <div class="pill">${esc([p.org, p.city].filter(Boolean).join(', ') || 'Your plan')}</div>
+    <div class="pill">Your plan</div>
     <h1>Library of Things Launch Plan</h1>
     ${facts ? `<dl class="facts">${facts}</dl>` : ''}
-    ${drafted.length && drafted.length < SECTIONS.length ? `<p class="lede no-print">${drafted.length} of ${SECTIONS.length} sections drafted so far.</p>` : ''}
-    ${drafted.length ? `<div class="row no-print">
+    ${begun.length ? `<p class="provenance">Answers and open questions are exactly as you wrote them. Toolkit passages are quoted word for word, with links. No part of this plan was written by AI.</p>
+    <div class="row no-print">
       <button class="btn" data-act="print">Print or save as PDF</button>
       <button class="btn dark" data-act="copy">Copy as text</button>
       <button class="btn dark" data-act="download">Download</button>
-    </div>` : `<p class="lede">Nothing drafted yet. Start with the first section and your plan will collect here.</p>
+    </div>` : `<p class="lede">Nothing here yet. Start with the first section and your plan will collect here.</p>
       <div class="row"><button class="btn" data-go="${SECTIONS[0].id}">Go to the first section</button></div>`}
     ${body}
-    ${open.length ? `<section class="plan-section open-qs"><h2>Still to figure out</h2>
-      <div class="prose"><p>Bring these to your team, your residents, or your next 1:1 with Shareable.</p>
-      <ul>${open.map((o) => `<li>${renderMd(o.text).html.replace(/^<p>|<\/p>$/g, '')} <span style="color:var(--soft)">(${esc(o.from)})</span></li>`).join('')}</ul></div></section>` : ''}
+    ${open.length ? `<section class="plan-section open-qs"><h2>Everything still to figure out</h2>
+      <div class="prose"><p>Your own list, gathered from every section. Bring it to your team, your residents, or your next 1:1 with Shareable.</p></div>
+      <ul class="verbatim-list">${open.map((o) => `<li>${esc(o.text)} <span style="color:var(--soft)">(${esc(o.from)})</span></li>`).join('')}</ul></section>` : ''}
+    ${begun.length && missing.length ? `<p class="lede no-print">Not started yet: ${missing.map((s) => `<a href="#" data-go="${s.id}">${esc(s.title)}</a>`).join(', ')}.</p>` : ''}
     ${footer()}
   </div>`;
 }
@@ -462,8 +355,9 @@ function renderSide() {
   const dot = (cls, mark) => `<span class="dot ${cls}" aria-hidden="true">${mark}</span>`;
   const item = (view, label, cls = '', mark = '') => `<li><button data-go="${view}" ${state.view === view ? 'aria-current="step"' : ''}>${dot(cls, mark)}<span>${esc(label)}</span></button></li>`;
   const hasProject = Object.values(state.project).some((v) => String(v || '').trim());
-  const drafted = SECTIONS.filter((x) => state.sections[x.id].draft).length;
+  const begun = SECTIONS.filter((x) => started(state.sections[x.id])).length;
   document.getElementById('top').innerHTML = `
+    <div class="exp"><span class="full">Experiment by the Relational Tech Project · Not Shareable's official toolkit</span><span class="short">Experiment · Not the official toolkit</span></div>
     <div class="top-in">
       <button class="brand" data-go="welcome" title="Library of Things Launch Plan"><small>Shareable toolkit, guided</small><span class="full">Library of Things Launch Plan</span><span class="short">LoT Launch Plan</span></button>
       <div class="top-actions">
@@ -471,16 +365,16 @@ function renderSide() {
         <button class="btn small" data-act="nav" aria-expanded="${live.navOpen}" aria-controls="side">${live.navOpen ? 'Close' : 'Sections'}</button>
       </div>
     </div>
-    <div class="progress" role="progressbar" aria-label="Sections drafted" aria-valuemin="0" aria-valuemax="${SECTIONS.length}" aria-valuenow="${drafted}"><i style="width:${(drafted / SECTIONS.length) * 100}%"></i></div>`;
+    <div class="progress" role="progressbar" aria-label="Sections started" aria-valuemin="0" aria-valuemax="${SECTIONS.length}" aria-valuenow="${begun}"><i style="width:${(begun / SECTIONS.length) * 100}%"></i></div>`;
   document.getElementById('side').className = 'side' + (live.navOpen ? ' open' : '');
   document.body.style.overflow = live.navOpen && matchMedia('(max-width: 900px)').matches ? 'hidden' : '';
   document.getElementById('side').innerHTML = `
-    <div class="side-label">Your plan · ${drafted} of ${SECTIONS.length} drafted</div>
+    <div class="side-label">Your plan · ${begun} of ${SECTIONS.length} started</div>
     <ol class="steps">
       ${item('welcome', 'Welcome', 'plain')}
       ${item('project', 'About your project', hasProject ? 'done' : '', hasProject ? '✓' : '')}
       <li class="gap"></li>
-      ${SECTIONS.map((s) => { const sec = state.sections[s.id]; return item(s.id, s.title, sec.done ? 'done' : sec.draft ? 'drafted' : '', sec.done ? '✓' : ''); }).join('')}
+      ${SECTIONS.map((s) => { const sec = state.sections[s.id]; return item(s.id, s.title, sec.done ? 'done' : started(sec) ? 'drafted' : '', sec.done ? '✓' : ''); }).join('')}
       <li class="gap"></li>
       ${item('plan', 'Your launch plan', 'plain')}
     </ol>
@@ -494,14 +388,17 @@ function renderAsk() {
     el.innerHTML = `<button class="btn dark ask-fab no-print" data-act="ask-open">Ask the toolkit</button>`;
     return;
   }
-  const r = renderMd(a.a);
+  let result = '';
+  if (a.busy) result = `<div class="writing" style="margin-top:16px"><span class="pulse"></span>Looking through the toolkit</div>`;
+  else if (a.passages && !a.passages.length) result = `<p class="part-hint" style="margin-top:16px">The toolkit passages found do not answer this. Try other words, or take it to your 1:1 with Shareable.</p>`;
+  else if (a.passages) result = `<div style="margin-top:14px">${a.passages.map((p, i) => passageHtml(p, i, false)).join('')}</div>`;
   el.innerHTML = `<div class="scrim no-print" data-act="ask-close"></div><div class="ask-panel no-print" role="dialog" aria-label="Ask the toolkit">
     <div class="card-head"><h3>Ask the toolkit</h3><button class="btn quiet small" data-act="ask-close">Close</button></div>
-    <p class="hint">A one-off question, answered only from Shareable's toolkit.</p>
+    <p class="hint">You get passages quoted word for word from Shareable's toolkit, not a written answer.</p>
     <textarea id="ask-q" placeholder="For example: how do other libraries handle items that come back broken?">${esc(a.q)}</textarea>
     <div class="row" style="margin-top:10px"><button class="btn small" data-act="ask-go" ${a.busy ? 'disabled' : ''}>${a.busy ? 'Looking' : 'Ask'}</button></div>
     ${a.error ? `<div class="error" role="alert">${esc(a.error)}</div>` : ''}
-    ${a.a || a.busy ? `<div class="prose" id="ask-answer" style="margin-top:16px">${r.html}</div>${a.busy ? '' : sourcesHtml(r.cited)}` : ''}
+    ${result}
   </div>`;
 }
 
@@ -520,30 +417,48 @@ function render() {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
+  const sec = state.sections[state.view];
   if (t.dataset.project) { state.project[t.dataset.project] = t.value; save(); }
-  else if (t.dataset.answer !== undefined) { state.sections[state.view].answers[Number(t.dataset.answer)] = t.value; save(); }
+  else if (t.dataset.answer !== undefined) { sec.answers[Number(t.dataset.answer)] = t.value; save(); }
+  else if (t.dataset.notes !== undefined) { sec.notes = t.value; save(); }
   else if (t.id === 'ask-q') live.ask.q = t.value;
+});
+
+document.addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.keep === undefined) return;
+  const sec = state.sections[state.view];
+  sec.passages[Number(t.dataset.keep)].keep = t.checked;
+  t.closest('.passage').classList.toggle('off', !t.checked);
+  save();
 });
 
 document.addEventListener('click', async (e) => {
   const goEl = e.target.closest('[data-go]');
   if (goEl) { e.preventDefault(); go(goEl.dataset.go); return; }
+  const sug = e.target.closest('[data-suggest]');
+  if (sug) {
+    // The person chooses to add it; from here on it is their line to edit
+    const sec = state.sections[state.view];
+    const q = sec.suggestions[Number(sug.dataset.suggest)];
+    const box = document.getElementById('notes');
+    sec.notes = (box.value.trim() ? box.value.replace(/\s+$/, '') + '\n' : '') + q.q;
+    q.added = true;
+    save();
+    box.value = sec.notes;
+    sug.disabled = true; sug.classList.add('added'); sug.textContent = `✓ ${q.q}`;
+    return;
+  }
   const el = e.target.closest('[data-act]');
   if (!el) return;
   const id = state.view;
   const sec = state.sections[id];
   switch (el.dataset.act) {
-    case 'draft': draft(id); break;
+    case 'look': look(id); break;
     case 'accept': sec.done = true; go(nextAfter(id)); break;
-    case 'edit': live.editing = id; render(); document.getElementById('edit-area').focus(); break;
-    case 'cancel-edit': live.editing = null; render(); break;
-    case 'save-edit': sec.draft = document.getElementById('edit-area').value.trim(); live.editing = null; save(); render(); break;
-    case 'redraft': live.redraft = id; render(); document.getElementById('note').focus(); break;
-    case 'redraft-cancel': live.redraft = null; render(); break;
-    case 'redraft-go': draft(id, document.getElementById('note').value.trim() || 'Try a different take.'); break;
     case 'nav': live.navOpen = !live.navOpen; renderSide(); break;
     case 'reset':
-      if (confirm('Start over? This clears your answers and drafts from this browser.')) { state = blank(); live.ask = { open: false, q: '', a: '', busy: false, error: null }; save(); go('welcome'); }
+      if (confirm('Start over? This clears everything you wrote from this browser.')) { state = blank(); live.ask = { open: false, q: '', passages: null, busy: false, error: null }; save(); go('welcome'); }
       break;
     case 'print': window.print(); break;
     case 'copy':
@@ -568,7 +483,22 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.id === 'ask-q') ask();
 });
 
-render();
+// ---------- Start ----------
+
+(async () => {
+  try {
+    const res = await fetch('sections.json', { cache: 'no-cache' });
+    if (!res.ok) throw new Error(String(res.status));
+    const config = await res.json();
+    PROJECT_FIELDS = config.project;
+    SECTIONS = config.sections;
+  } catch {
+    document.getElementById('main').innerHTML = '<div class="col"><div class="error" role="alert">The workbook could not load its questions. Check your connection and reload the page.</div></div>';
+    return;
+  }
+  load();
+  render();
+})();
 </script>
 </body>
 </html>
