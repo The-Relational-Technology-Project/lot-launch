@@ -21,9 +21,10 @@
 <div id="ask"></div>
 
 <script>
-// The workbook. People write their own plan; the server (supabase/functions/
-// lot-plan, action "guide") only finds toolkit passages that bear on what they
-// wrote and quotes them word for word. Nothing here rewrites a person's words.
+// The workbook. Each section is three steps: jot first thoughts, read what the
+// toolkit says about them, then write the plan in your own words. The server
+// (supabase/functions/lot-plan, action "guide") only finds toolkit passages and
+// quotes them word for word. Nothing here rewrites a person's words.
 const API = 'https://texakzqqenzpxawktbgx.supabase.co/functions/v1/lot-plan';
 const TOOLKIT = 'https://www.shareable.net/toolkit/library-of-things/';
 // Served from Shareable's own site, resized by their image CDN
@@ -37,13 +38,23 @@ let SECTIONS = [];
 
 // ---------- State ----------
 
-function blankSection(spec) {
-  return { answers: spec.questions.map(() => ''), passages: [], suggestions: [], notes: '', looked: false, done: false };
+function blankSection() {
+  // first: quick notes (step 1). plan: their own words for the plan (step 3),
+  // started from the first notes until they change it. notes: still to figure out.
+  return { first: '', plan: '', planTouched: false, passages: [], suggestions: [], notes: '', looked: false, skipped: false, done: false };
+}
+
+/** Sections saved before the three steps had one answer per question */
+function upgrade(sec) {
+  if (!Array.isArray(sec.answers)) return sec;
+  const joined = sec.answers.filter((a) => String(a || '').trim()).join('\n\n');
+  const { answers, ...rest } = sec;
+  return { ...rest, first: joined, plan: joined, planTouched: Boolean(joined) };
 }
 
 function blank() {
   const sections = {};
-  for (const s of SECTIONS) sections[s.id] = blankSection(s);
+  for (const s of SECTIONS) sections[s.id] = blankSection();
   return { view: 'welcome', project: {}, sections };
 }
 
@@ -55,14 +66,14 @@ function load() {
     const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
     if (saved && saved.sections) {
       state = { ...state, ...saved, sections: state.sections };
-      for (const s of SECTIONS) if (saved.sections[s.id]) state.sections[s.id] = { ...blankSection(s), ...saved.sections[s.id] };
+      for (const s of SECTIONS) if (saved.sections[s.id]) state.sections[s.id] = { ...blankSection(), ...upgrade(saved.sections[s.id]) };
       return;
     }
     // Carry what people typed in the first version; its AI-written drafts are left behind
     const old = JSON.parse(localStorage.getItem(OLD_STORE) || 'null');
     if (old && old.sections) {
       state.project = old.project || {};
-      for (const s of SECTIONS) if (old.sections[s.id] && Array.isArray(old.sections[s.id].answers)) state.sections[s.id].answers = s.questions.map((_, i) => old.sections[s.id].answers[i] || '');
+      for (const s of SECTIONS) if (old.sections[s.id] && Array.isArray(old.sections[s.id].answers)) state.sections[s.id] = { ...blankSection(), ...upgrade({ answers: old.sections[s.id].answers }) };
     }
   } catch { /* a fresh start is fine */ }
 }
@@ -79,7 +90,9 @@ const live = { busy: null, error: null, navOpen: false, ask: { open: false, q: '
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sectionById = (id) => SECTIONS.find((s) => s.id === id);
 const lines = (text) => String(text || '').split('\n').filter((l) => l.trim());
-const answered = (sec) => sec.answers.some((a) => String(a || '').trim());
+/** Their words for the plan: what they wrote in step 3, or their first notes if they stopped at step 1 */
+const words = (sec) => (String(sec.plan || '').trim() ? sec.plan : sec.first) || '';
+const answered = (sec) => Boolean(words(sec).trim());
 const kept = (sec) => sec.passages.filter((p) => p.keep);
 const started = (sec) => answered(sec) || kept(sec).length > 0 || lines(sec.notes).length > 0;
 
@@ -124,13 +137,15 @@ async function look(id) {
   render();
   document.getElementById('toolkit-part')?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   try {
-    const data = await call({ action: 'guide', section: id, project: state.project, answers: spec.questions.map((q, i) => ({ q, a: sec.answers[i] })) });
+    const data = await call({ action: 'guide', section: id, project: state.project, answers: [{ q: `First thoughts on ${spec.title}. Things to touch on: ${spec.questions.join(' ')}`, a: sec.first }] });
     // A passage the person already unticked stays unticked if it comes back
     const dropped = new Set(sec.passages.filter((p) => !p.keep).map((p) => p.quote));
     sec.passages = (data.passages || []).map((p) => ({ ...p, keep: !dropped.has(p.quote) }));
     const added = new Set(sec.suggestions.filter((q) => q.added).map((q) => q.q));
     sec.suggestions = (data.questions || []).map((q) => ({ ...q, added: added.has(q.q) }));
     sec.looked = true;
+    // Step 3 starts from their own first notes, so nobody types twice
+    if (!sec.planTouched) sec.plan = sec.first;
   } catch (err) {
     live.error = err.message;
   }
@@ -163,10 +178,7 @@ function planMarkdown() {
     const sec = state.sections[s.id];
     if (!started(sec)) continue;
     out.push(`## ${s.title}`, '');
-    if (answered(sec)) {
-      out.push('### Our answers', '');
-      s.questions.forEach((q, i) => { if (String(sec.answers[i] || '').trim()) out.push(`**${q}**`, '', sec.answers[i], ''); });
-    }
+    if (answered(sec)) out.push('### Our plan', '', words(sec), '');
     if (kept(sec).length) {
       out.push('### From the toolkit', '');
       for (const k of kept(sec)) out.push(`> ${k.quote}`, '', `Source: ${k.heading}, ${k.url}`, '');
@@ -177,7 +189,7 @@ function planMarkdown() {
     }
   }
   if (open.length) out.push('## Everything still to figure out', '', ...open.map((l) => `- ${l}`), '');
-  out.push(`Answers and open questions are exactly as we wrote them. Toolkit passages are quoted word for word from the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0): ${TOOLKIT}`);
+  out.push(`Our plan and open questions are exactly as we wrote them. Toolkit passages are quoted word for word from the Library of Things Toolkit 2.0 by Shareable (CC BY-NC-ND 4.0): ${TOOLKIT}`);
   return out.join('\n');
 }
 
@@ -196,7 +208,7 @@ function aiCard() {
     <div class="prose">
       <h3>How AI is used here, and how it is not</h3>
       <ul>
-        <li><strong>You write the plan.</strong> Your answers and your open questions go into the final plan exactly as you typed them.</li>
+        <li><strong>You write the plan.</strong> Your words and your open questions go into the final plan exactly as you typed them.</li>
         <li><strong>The toolkit speaks for itself.</strong> Passages are quoted word for word from Shareable's toolkit, with a link to the page they came from.</li>
         <li><strong>AI only points.</strong> It reads what you wrote to pick which toolkit passages to show, adds a one-line note on why, and suggests questions you might add. Each of those is labelled.</li>
       </ul>
@@ -211,7 +223,7 @@ function viewWelcome() {
       <div class="hero-text">
         <div class="pill">For Co-Lab teams</div>
         <h1>Write your launch plan, one section at a time</h1>
-        <p class="lede">You write what you know about your building and your residents. The workbook shows you what Shareable's Library of Things Toolkit says about it, word for word.</p>
+        <p class="lede">About 30 minutes. For each part of your plan: jot your first thoughts, see what Shareable's Library of Things Toolkit says, then write it in your own words.</p>
         <div class="row">
           <button class="btn" data-go="project">${begun ? 'Pick up where you left off' : 'Start with your project'}</button>
         </div>
@@ -220,8 +232,13 @@ function viewWelcome() {
         <img src="${COVER}" alt="Cover of The Library of Things Toolkit, second edition, by Shareable" width="1200" height="799" onerror="this.parentNode.remove()">
       </a>
     </div>
+    <ol class="three">
+      <li><span class="num">1</span><div><strong>First thoughts.</strong> A minute of quick notes or gut feel.</div></li>
+      <li><span class="num">2</span><div><strong>Things to consider.</strong> A few passages from the toolkit, word for word, picked for your notes.</div></li>
+      <li><span class="num">3</span><div><strong>Your plan, in your words.</strong> Your notes come with you. Change them after reading, and list what is still open.</div></li>
+    </ol>
+    <p class="lede">${SECTIONS.length} sections, about 3 minutes each. Skip what you cannot answer yet. Your work is saved in this browser, so you can stop and come back.</p>
     ${aiCard()}
-    <p class="lede">Plan on 30 to 45 minutes for ${SECTIONS.length} sections. Skip what you cannot answer yet. Your work is saved in this browser, so you can stop and come back.</p>
     ${begun ? '<div class="row"><button class="btn quiet" data-act="reset">Start over</button></div>' : ''}
     ${footer()}
   </div>`;
@@ -239,7 +256,7 @@ function viewProject() {
   return `<div class="col">
     <div class="pill">Step 1</div>
     <h2>About your project</h2>
-    <p class="lede">This goes at the top of your plan exactly as you write it, and helps find toolkit passages that fit your building. Rough notes are fine.</p>
+    <p class="lede">Two minutes. This goes at the top of your plan exactly as you write it, and helps find toolkit passages that fit your building.</p>
     <div class="two">${short.map(field).join('')}</div>
     ${long.map(field).join('')}
     <div class="row">
@@ -262,20 +279,17 @@ function viewSection(spec) {
   const sec = state.sections[spec.id];
   const n = SECTIONS.indexOf(spec) + 1;
   const busy = live.busy === spec.id;
-  const questions = spec.questions.map((q, i) => `<div class="field">
-      <label for="q-${i}">${esc(q)}</label>
-      <textarea id="q-${i}" data-answer="${i}">${esc(sec.answers[i])}</textarea>
-    </div>`).join('');
+  // Steps 2 and 3 open once they have looked, or chosen to go on without the toolkit
+  const open = sec.looked || sec.skipped;
+  const head = (num, title) => `<h3 class="step-head"><span class="num">${num}</span>${title}</h3>`;
 
-  let toolkit;
-  if (busy) toolkit = `<div class="writing"><span class="pulse"></span>Looking through the toolkit for passages that fit what you wrote</div>`;
-  else if (!sec.looked) toolkit = `<p class="part-hint">See what the toolkit says about what you wrote. Passages are quoted word for word.</p>
-      <div class="row"><button class="btn" data-act="look">Show me what the toolkit says</button></div>`;
-  else if (!sec.passages.length) toolkit = `<p class="part-hint">Nothing in the toolkit matched closely. Try adding a little more above, then look again.</p>
+  let consider;
+  if (busy) consider = `<div class="writing"><span class="pulse"></span>Looking through the toolkit for passages that fit your notes</div>`;
+  else if (!sec.looked) consider = `<p class="part-hint">A few passages from Shareable's toolkit, word for word, picked for what you jotted down.</p>`;
+  else if (!sec.passages.length) consider = `<p class="part-hint">Nothing in the toolkit matched closely. You can add a little more in step 1 and look again, or carry on.</p>
       <div class="row"><button class="btn dark small" data-act="look">Look again</button></div>`;
-  else toolkit = `<p class="part-hint">Word for word from Shareable's toolkit, picked for what you wrote. Untick any you do not want in your plan.</p>
-      ${sec.passages.map((p, i) => passageHtml(p, i, true)).join('')}
-      <div class="row"><button class="btn quiet small" data-act="look">Changed your answers? Look again</button></div>`;
+  else consider = `<p class="part-hint">Word for word from Shareable's toolkit, picked for your notes. Read them, then write your plan below. Untick any you do not want kept in your plan.</p>
+      ${sec.passages.map((p, i) => passageHtml(p, i, true)).join('')}`;
 
   const suggestions = sec.suggestions.length ? `<div class="suggest">
       <div class="tag"><span class="ai-tag">AI suggestion</span> Questions the toolkit passages raise. Tap one to add it to your list.</div>
@@ -283,33 +297,40 @@ function viewSection(spec) {
     </div>` : '';
 
   return `<div class="col">
-    <div class="pill">Section ${n} of ${SECTIONS.length}</div>
+    <div class="pill">Section ${n} of ${SECTIONS.length} · about 3 minutes</div>
     <h2>${esc(spec.title)}</h2>
     <p class="lede">${esc(spec.brief)}</p>
 
     <section class="part">
-      <h3 class="part-head"><span class="banner">You write</span></h3>
-      <p class="part-hint">Your words go into the plan exactly as you type them.</p>
-      ${questions}
-    </section>
-
-    <section class="part" id="toolkit-part">
-      <h3 class="part-head"><span class="banner">From the toolkit</span></h3>
+      ${head(1, 'First thoughts')}
+      <label class="part-hint" for="first">Quick notes or gut feel. A minute is plenty, and rough is fine. You might touch on:</label>
+      <ul class="nudges">${spec.questions.map((q) => `<li>${esc(q)}</li>`).join('')}</ul>
+      <textarea id="first" data-first class="notes">${esc(sec.first)}</textarea>
       ${live.error ? `<div class="error" role="alert">${esc(live.error)}</div>` : ''}
-      ${toolkit}
+      <div class="row">
+        ${busy ? '' : `<button class="btn${open ? ' dark small' : ''}" data-act="look">${sec.looked ? 'Changed your notes? Look again' : 'See things to consider'}</button>`}
+        ${open || busy ? '' : `<button class="btn quiet" data-act="skip-toolkit">Write my plan without the toolkit</button>`}
+      </div>
     </section>
 
-    <section class="part">
-      <h3 class="part-head"><span class="banner">Still to figure out</span></h3>
-      <label class="part-hint" for="notes">Your own list, one per line. Nothing lands here unless you put it here.</label>
-      <textarea id="notes" data-notes class="notes" placeholder="For example: do we need a permit for the container?">${esc(sec.notes)}</textarea>
+    <section class="part${sec.looked || busy ? '' : ' later'}" id="toolkit-part">
+      ${head(2, 'Things to consider')}
+      ${consider}
+    </section>
+
+    <section class="part${open ? '' : ' later'}" id="plan-part">
+      ${head(3, 'Your plan, in your words')}
+      ${open ? `<label class="part-hint" for="plan">${sec.planTouched ? 'This goes into your plan exactly as written.' : 'Your first thoughts are copied here. Change them however you like now that you have read the toolkit. This goes into your plan exactly as written.'}</label>
+      <textarea id="plan" data-plan class="notes">${esc(sec.plan)}</textarea>
+      <label class="part-hint sub" for="notes"><strong>Still to figure out.</strong> Your own list, one per line. Nothing lands here unless you put it here.</label>
+      <textarea id="notes" data-notes placeholder="For example: do we need a permit for the container?">${esc(sec.notes)}</textarea>
       ${suggestions}
+      <div class="row">
+        <button class="btn" data-act="accept">Looks good, next</button>
+      </div>` : `<p class="part-hint">After reading, you write this part of your plan and list what is still open. Your first thoughts come with you.</p>`}
     </section>
 
-    <div class="row">
-      <button class="btn" data-act="accept">Looks good, next</button>
-      ${started(sec) ? '' : `<button class="btn quiet" data-go="${nextAfter(spec.id)}">Skip for now</button>`}
-    </div>
+    ${open ? '' : `<div class="row"><button class="btn quiet" data-go="${nextAfter(spec.id)}">Skip this section for now</button></div>`}
     ${footer()}
   </div>`;
 }
@@ -324,7 +345,7 @@ function viewPlan() {
     for (const l of lines(sec.notes)) open.push({ text: l, from: s.title });
     return `<section class="plan-section">
       <h2>${esc(s.title)}</h2>
-      ${answered(sec) ? `<h3 class="plan-sub">Our answers</h3>${s.questions.map((q, i) => String(sec.answers[i] || '').trim() ? `<div class="qa"><p class="q">${esc(q)}</p><p class="verbatim">${esc(sec.answers[i])}</p></div>` : '').join('')}` : ''}
+      ${answered(sec) ? `<h3 class="plan-sub">Our plan</h3><p class="verbatim">${esc(words(sec))}</p>` : ''}
       ${kept(sec).length ? `<h3 class="plan-sub">From the toolkit</h3>${kept(sec).map((k) => `<div class="passage"><blockquote>${esc(k.quote)}</blockquote><div class="source">${sourceLine(k)}</div></div>`).join('')}` : ''}
       ${lines(sec.notes).length ? `<h3 class="plan-sub">Still to figure out</h3><ul class="verbatim-list">${lines(sec.notes).map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
     </section>`;
@@ -335,7 +356,7 @@ function viewPlan() {
     <div class="pill">Your plan</div>
     <h1>Library of Things Launch Plan</h1>
     ${facts ? `<dl class="facts">${facts}</dl>` : ''}
-    ${begun.length ? `<p class="provenance">Answers and open questions are exactly as you wrote them. Toolkit passages are quoted word for word, with links. No part of this plan was written by AI.</p>
+    ${begun.length ? `<p class="provenance">Your plan and open questions are exactly as you wrote them. Toolkit passages are quoted word for word, with links. No part of this plan was written by AI.</p>
     <div class="row no-print">
       <button class="btn" data-act="print">Print or save as PDF</button>
       <button class="btn dark" data-act="copy">Copy as text</button>
@@ -419,7 +440,8 @@ document.addEventListener('input', (e) => {
   const t = e.target;
   const sec = state.sections[state.view];
   if (t.dataset.project) { state.project[t.dataset.project] = t.value; save(); }
-  else if (t.dataset.answer !== undefined) { sec.answers[Number(t.dataset.answer)] = t.value; save(); }
+  else if (t.dataset.first !== undefined) { sec.first = t.value; save(); }
+  else if (t.dataset.plan !== undefined) { sec.plan = t.value; sec.planTouched = true; save(); }
   else if (t.dataset.notes !== undefined) { sec.notes = t.value; save(); }
   else if (t.id === 'ask-q') live.ask.q = t.value;
 });
@@ -455,6 +477,7 @@ document.addEventListener('click', async (e) => {
   const sec = state.sections[id];
   switch (el.dataset.act) {
     case 'look': look(id); break;
+    case 'skip-toolkit': sec.skipped = true; if (!sec.planTouched) sec.plan = sec.first; save(); render(); document.getElementById('plan-part').scrollIntoView({ block: 'start' }); break;
     case 'accept': sec.done = true; go(nextAfter(id)); break;
     case 'nav': live.navOpen = !live.navOpen; renderSide(); break;
     case 'reset':

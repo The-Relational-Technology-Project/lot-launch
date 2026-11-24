@@ -13,23 +13,29 @@ Shareable, November 2026.
 ## How it works now
 
 After feedback from Shareable (November 2026), the workbook stopped writing
-anything on a person's behalf. Each section has three parts:
+anything on a person's behalf. Each section is three numbered steps, about
+three minutes in all, so the whole plan fits in half an hour:
 
-- **You write.** Answers go into the final plan exactly as typed.
-- **From the toolkit.** Passages quoted word for word, with links, chosen for
-  what the person wrote. The server checks every quote against the toolkit and
-  drops any that is not exact. Each has a one-line note, labelled as AI, on why
-  it was picked; the note is not part of the plan.
-- **Still to figure out.** A notepad only the person writes in. The tool can
-  suggest questions the passages raise, and a tap adds one to the notepad.
+1. **First thoughts.** One box for quick notes. The section's questions sit
+   above it as nudges.
+2. **Things to consider.** Three or four toolkit passages quoted word for word,
+   with links, chosen for those notes. The server checks every quote against
+   the toolkit and drops any that is not exact. Each has a one-line note,
+   labelled as AI, on why it was picked; the note is not part of the plan.
+3. **Your plan, in your words.** The first thoughts are copied in, so nobody
+   types twice, and the person changes them after reading. Beside it sits
+   "Still to figure out", a notepad only the person writes in. The tool can
+   suggest questions the passages raise, and a tap adds one.
 
-The final plan is those three parts, section by section. No sentence in it is
+The final plan is the person's step 3 words, the passages they kept and their
+open questions, section by section. No sentence in it is
 written by AI. Every page carries an "experiment" label.
 
 ## Changing the questions
 
 `sections.json` is the one file that sets what the workbook asks: the project
-fields, the sections, their order, and the questions in each. Edit it, push,
+fields, the sections, their order, and the nudges in each (the `questions`
+list: keep to three or four short ones). Edit it, push,
 and run `./deploy.sh` so the server reads the same file.
 
 ## Pieces
